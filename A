@@ -1,0 +1,170 @@
+package com.example.customlauncher
+
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Intent
+import android.os.Bundle
+import android.provider.Settings
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+
+class LauncherActivity : AppCompatActivity() {
+
+    companion object {
+        const val APPWIDGET_HOST_ID = 1024
+        const val REQUEST_PICK_APPWIDGET = 1001
+        const val REQUEST_CONFIGURE_APPWIDGET = 1002
+    }
+
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+    private lateinit var widgetContainer: FrameLayout
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        // Load layout with a button and container
+        setContentView(R.layout.activity_launcher)
+
+        widgetContainer = findViewById(R.id.widget_container)
+
+        appWidgetManager = AppWidgetManager.getInstance(this)
+        appWidgetHost = AppWidgetHost(this, APPWIDGET_HOST_ID)
+        appWidgetHost.startListening()
+
+        findViewById<Button>(R.id.btn_add_widget).setOnClickListener {
+            if (isDefaultLauncher()) {
+                selectAppWidget()
+            } else {
+                Toast.makeText(this, "Set this app as default launcher first", Toast.LENGTH_LONG).show()
+                requestSetAsDefaultLauncher()
+            }
+        }
+    }
+
+    private fun selectAppWidget() {
+        val appWidgetId = appWidgetHost.allocateAppWidgetId()
+        val pickIntent = Intent(AppWidgetManager.ACTION_APPWIDGET_PICK).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+        }
+        startActivityForResult(pickIntent, REQUEST_PICK_APPWIDGET)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        when (requestCode) {
+            REQUEST_PICK_APPWIDGET -> {
+                if (resultCode == RESULT_OK) {
+                    val appWidgetId = data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1) ?: return
+                    val appWidgetInfo = appWidgetManager.getAppWidgetInfo(appWidgetId)
+
+                    if (appWidgetInfo?.configure != null) {
+                        // Launch widget configuration
+                        val configIntent = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+                            component = appWidgetInfo.configure
+                            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+                        }
+                        startActivityForResult(configIntent, REQUEST_CONFIGURE_APPWIDGET)
+                    } else {
+                        bindAndShowWidget(appWidgetId, appWidgetInfo)
+                    }
+                }
+            }
+
+            REQUEST_CONFIGURE_APPWIDGET -> {
+                if (resultCode == RESULT_OK) {
+                    val appWidgetId = data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1) ?: return
+                    val appWidgetInfo = appWidgetManager.getAppWidgetInfo(appWidgetId)
+                    bindAndShowWidget(appWidgetId, appWidgetInfo)
+                }
+            }
+        }
+    }
+
+    private fun bindAndShowWidget(appWidgetId: Int, info: AppWidgetProviderInfo?) {
+        if (info == null) return
+
+        val hostView: AppWidgetHostView = appWidgetHost.createView(this, appWidgetId, info).apply {
+            setAppWidget(appWidgetId, info)
+        }
+
+        widgetContainer.removeAllViews()
+        widgetContainer.addView(hostView)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        appWidgetHost.stopListening()
+    }
+
+    private fun isDefaultLauncher(): Boolean {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        val resolveInfo = packageManager.resolveActivity(intent, 0)
+        return resolveInfo?.activityInfo?.packageName == packageName
+    }
+
+    private fun requestSetAsDefaultLauncher() {
+        val intent = Intent(Settings.ACTION_HOME_SETTINGS)
+        startActivity(intent)
+    }
+}
+
+
+
+
+
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <Button
+        android:id="@+id/btn_add_widget"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Add Widget"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="40dp" />
+
+</FrameLayout>
+
+
+
+
+
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.customlauncher">
+
+    <uses-permission android:name="android.permission.BIND_APPWIDGET"
+        tools:ignore="ProtectedPermissions" />
+
+    <application
+        android:label="Custom Launcher"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+
+        <activity android:name=".LauncherActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>
+
+
+
+
