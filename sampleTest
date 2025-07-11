@@ -1,3 +1,56 @@
-"android.permission.BIND_APPWIDGET" tools:ignore="ProtectedPermissions"/>
+<uses-permission android:name="android.permission.BIND_APPWIDGET" tools:ignore="ProtectedPermissions"/>
+<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+
+
+val appWidgetHost = AppWidgetHost(context, HOST_ID)
+val appWidgetManager = AppWidgetManager.getInstance(context)
+
+appWidgetHost.startListening()
+
+
+
+val appWidgetId = appWidgetHost.allocateAppWidgetId()
+val pickIntent = Intent(AppWidgetManager.ACTION_APPWIDGET_PICK).apply {
+    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+}
+
+startActivityForResult(pickIntent, REQUEST_PICK_APPWIDGET)
+
+
+
+override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    super.onActivityResult(requestCode, resultCode, data)
+    if (requestCode == REQUEST_PICK_APPWIDGET && resultCode == RESULT_OK) {
+        val appWidgetId = data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1) ?: return
+
+        val appWidgetInfo = appWidgetManager.getAppWidgetInfo(appWidgetId)
+
+        if (appWidgetInfo.configure != null) {
+            // Some widgets need configuration (e.g., calendar)
+            val configIntent = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+                component = appWidgetInfo.configure
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+            }
+            startActivityForResult(configIntent, REQUEST_CONFIGURE_WIDGET)
+        } else {
+            // Create and display the widget
+            val hostView = appWidgetHost.createView(this, appWidgetId, appWidgetInfo)
+            hostView.setAppWidget(appWidgetId, appWidgetInfo)
+
+            findViewById<FrameLayout>(R.id.widget_container).addView(hostView)
+        }
+    }
+}
+
+
+val providers = AppWidgetManager.getInstance(context).installedProviders
+for (provider in providers) {
+    Log.d("WidgetProvider", "${provider.provider.packageName} / ${provider.provider.className}")
+}
+
+
+
+
+
 
 
