@@ -1,0 +1,205 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.widgethost">
+
+    <!-- System-level permissions (must be system app or signed with platform key) -->
+    <uses-permission android:name="android.permission.BIND_APPWIDGET" />
+    <uses-permission android:name="android.permission.BIND_WIDGETS" />
+    <uses-permission android:name="android.permission.WIDGET_HOST" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <application
+        android:allowBackup="true"
+        android:label="Widget Host"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.WidgetHost">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Your custom widget receiver -->
+        <receiver
+            android:name=".MyWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/my_widget_info" />
+        </receiver>
+    </application>
+</manifest>
+
+
+
+activitymain
+
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <Button
+        android:id="@+id/btnAddWidget"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Add Widget" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:id="@+id/widgetContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+</LinearLayout>
+
+
+
+widgetinfo
+
+
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="110dp"
+    android:updatePeriodMillis="86400000"
+    android:initialLayout="@layout/widget_sample"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />
+
+
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:background="#CCCCCC"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:minHeight="110dp"
+    android:minWidth="110dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Sample Widget"
+        android:textStyle="bold"
+        android:textSize="16sp"/>
+</LinearLayout>
+
+
+class MyWidgetProvider : AppWidgetProvider() {
+    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
+        for (id in ids) {
+            val views = RemoteViews(context.packageName, R.layout.widget_sample)
+            manager.updateAppWidget(id, views)
+        }
+    }
+}
+
+
+
+class MainActivity : AppCompatActivity() {
+
+    private val APPWIDGET_HOST_ID = 1001
+    private val BIND_WIDGET_REQUEST = 42
+
+    private lateinit var appWidgetHost: AppWidgetHost
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var widgetContainer: LinearLayout
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        widgetContainer = findViewById(R.id.widgetContainer)
+
+        appWidgetHost = AppWidgetHost(this, APPWIDGET_HOST_ID)
+        appWidgetManager = AppWidgetManager.getInstance(this)
+
+        findViewById<Button>(R.id.btnAddWidget).setOnClickListener {
+            showWidgetPicker()
+        }
+    }
+
+    private fun showWidgetPicker() {
+        val providers = appWidgetManager.installedProviders
+        val filtered = providers.filter {
+            it.minWidth <= 250 && it.minHeight <= 250
+        }
+
+        val labels = filtered.map { it.label }
+
+        AlertDialog.Builder(this)
+            .setTitle("Choose a widget")
+            .setItems(labels.toTypedArray()) { _, which ->
+                val info = filtered[which]
+                allocateAndBindWidget(info)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun allocateAndBindWidget(info: AppWidgetProviderInfo) {
+        val widgetId = appWidgetHost.allocateAppWidgetId()
+
+        val success = appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, info.provider)
+
+        if (success) {
+            bindWidgetToContainer(widgetId, info)
+        } else {
+            val bindIntent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+            }
+            startActivityForResult(bindIntent, BIND_WIDGET_REQUEST)
+        }
+    }
+
+    private fun bindWidgetToContainer(widgetId: Int, info: AppWidgetProviderInfo) {
+        val hostView = appWidgetHost.createView(this, widgetId, info)
+        hostView.setAppWidget(widgetId, info)
+        widgetContainer.addView(hostView)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        appWidgetHost.startListening()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        appWidgetHost.stopListening()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == BIND_WIDGET_REQUEST && resultCode == RESULT_OK) {
+            val widgetId = data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1) ?: return
+            val info = appWidgetManager.getAppWidgetInfo(widgetId)
+            if (info != null) {
+                bindWidgetToContainer(widgetId, info)
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+
