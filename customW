@@ -1,0 +1,15 @@
+📁 app/
+ ┣ 📁 java/com/yourapp/
+ ┃ ┣ 📄 MainActivity.kt
+ ┃ ┣ 📄 WidgetPickerAdapter.kt
+ ┃ ┗ 📄 WidgetUtils.kt
+ ┣ 📁 res/
+ ┃ ┣ 📁 layout/
+ ┃ ┃ ┣ 📄 activity_main.xml
+ ┃ ┃ ┗ 📄 item_widget_preview.xml
+ ┃ ┣ 📁 drawable/
+ ┃ ┣ 📁 mipmap/
+ ┃ ┗ 📄 AndroidManifest.xml
+
+
+
