@@ -1,0 +1,270 @@
+package com.example.mynewwidget
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.appwidget.*
+import android.content.ComponentName
+import android.content.Context
+import android.graphics.Rect
+import android.os.Bundle
+import android.view.*
+import android.widget.*
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import org.json.JSONArray
+import org.json.JSONObject
+import kotlin.math.abs
+
+class MainActivity : Activity() {
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+    private lateinit var addedWidgetContainer: FrameLayout
+    private lateinit var deleteZone: ImageView
+    private val PREFS_NAME = "widget_prefs"
+    private val PREF_WIDGET_POSITIONS = "widget_positions"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        appWidgetManager = AppWidgetManager.getInstance(this)
+        appWidgetHost = AppWidgetHost(this, 1024)
+        appWidgetHost.startListening()
+
+        addedWidgetContainer = FrameLayout(this)
+        val root = FrameLayout(this)
+
+        val addWidgetButton = TextView(this).apply {
+            text = "➕ Add Widget"
+            textSize = 16f
+            setOnClickListener { showWidgetPickerBottomSheet() }
+            setBackgroundColor(0xFF3F51B5.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding(32, 16, 32, 16)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            )
+            z = 10f
+        }
+
+        deleteZone = ImageView(this).apply {
+            setImageResource(android.R.drawable.ic_menu_delete)
+            layoutParams = FrameLayout.LayoutParams(150, 150, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            visibility = View.GONE
+            alpha = 0.8f
+        }
+
+        root.addView(addedWidgetContainer)
+        root.addView(addWidgetButton)
+        root.addView(deleteZone)
+        setContentView(root)
+
+        addedWidgetContainer.viewTreeObserver.addOnGlobalLayoutListener(object :
+            ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                addedWidgetContainer.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                restoreWidgetsFromPrefs()
+            }
+        })
+    }
+
+    private fun showWidgetPickerBottomSheet() {
+        val bottomSheet = BottomSheetDialog(this)
+        val recyclerView = RecyclerView(this).apply {
+            layoutManager = GridLayoutManager(context, 2)
+        }
+
+        val density = resources.displayMetrics.density
+        val maxCellDp = 210
+        val squareToleranceDp = 50
+
+        val maxPx = (maxCellDp * density).toInt()
+        val tolerancePx = (squareToleranceDp * density).toInt()
+
+        val filteredWidgets = appWidgetManager.installedProviders.filter {
+            val w = (it.minWidth * density).toInt()
+            val h = (it.minHeight * density).toInt()
+            abs(w - h) <= tolerancePx && w <= maxPx && h <= maxPx &&
+            (it.previewImage != 0) // filter out those with no preview
+        }
+
+        if (filteredWidgets.isEmpty()) {
+            Toast.makeText(this, "No square-like widgets with preview found", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val adapter = object : RecyclerView.Adapter<WidgetViewHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): WidgetViewHolder {
+                val layout = LinearLayout(parent.context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(16, 16, 16, 16)
+                }
+                return WidgetViewHolder(layout)
+            }
+
+            override fun onBindViewHolder(holder: WidgetViewHolder, position: Int) {
+                val provider = filteredWidgets[position]
+                val widgetId = appWidgetHost.allocateAppWidgetId()
+                val bound = appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)
+                if (!bound) return
+
+                val previewView = appWidgetHost.createView(this@MainActivity, widgetId, provider)
+
+                if (previewView == null || previewView.measuredWidth == 0 || previewView.measuredHeight == 0) {
+                    return  // don't show empty views
+                }
+
+                previewView.setAppWidget(widgetId, provider)
+                previewView.layoutParams = LinearLayout.LayoutParams(
+                    provider.minWidth.coerceAtLeast(200),
+                    provider.minHeight.coerceAtLeast(200)
+                )
+
+                (holder.itemView as LinearLayout).apply {
+                    removeAllViews()
+                    addView(TextView(context).apply {
+                        text = provider.label
+                        setPadding(0, 0, 0, 8)
+                    })
+                    addView(previewView)
+                    setOnClickListener {
+                        bottomSheet.dismiss()
+                        addWidgetToActivity(provider, widgetId)
+                    }
+                }
+            }
+
+            override fun getItemCount(): Int = filteredWidgets.size
+        }
+
+        recyclerView.adapter = adapter
+        bottomSheet.setContentView(recyclerView)
+        bottomSheet.show()
+    }
+
+    private fun addWidgetToActivity(provider: AppWidgetProviderInfo, widgetId: Int) {
+        val width = provider.minWidth.coerceAtLeast(200)
+        val height = provider.minHeight.coerceAtLeast(200)
+
+        val hostView = appWidgetHost.createView(this, widgetId, provider)
+        hostView.setAppWidget(widgetId, provider)
+        hostView.layoutParams = FrameLayout.LayoutParams(width, height)
+
+        val container = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(width, height)
+            x = 100f
+            y = 100f
+            addView(hostView)
+            setOnTouchListener(widgetTouchListener(this, widgetId, provider))
+        }
+
+        if (!isOverlappingAny(container)) {
+            addedWidgetContainer.addView(container)
+            saveWidgetToPrefs(widgetId, provider.provider, 100, 100, width, height)
+        } else {
+            Toast.makeText(this, " Can't place: Overlapping", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun widgetTouchListener(widget: View, widgetId: Int, provider: AppWidgetProviderInfo): View.OnTouchListener {
+        var dX = 0f
+        var dY = 0f
+        var isDragging = false
+
+        return View.OnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dX = widget.x - event.rawX
+                    dY = widget.y - event.rawY
+                    isDragging = false
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    widget.x = event.rawX + dX
+                    widget.y = event.rawY + dY
+                    deleteZone.visibility = View.VISIBLE
+                    isDragging = true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    deleteZone.visibility = View.GONE
+                    if (isOverDeleteZone(widget)) {
+                        (widget.parent as? ViewGroup)?.removeView(widget)
+                        Toast.makeText(this, "🗑️ Widget Removed", Toast.LENGTH_SHORT).show()
+                    } else if (isOverlappingAny(widget)) {
+                        Toast.makeText(this, "❌ Overlaps with existing", Toast.LENGTH_SHORT).show()
+                        widget.x = 100f
+                        widget.y = 100f
+                    } else if (isDragging) {
+                        saveWidgetToPrefs(widgetId, provider.provider, widget.x.toInt(), widget.y.toInt(), widget.width, widget.height)
+                    }
+                }
+            }
+            true
+        }
+    }
+
+    private fun isOverDeleteZone(view: View): Boolean {
+        val loc = IntArray(2)
+        deleteZone.getLocationOnScreen(loc)
+        val x = loc[0]
+        val y = loc[1]
+
+        val centerX = (view.x + view.width / 2).toInt()
+        val centerY = (view.y + view.height / 2).toInt()
+
+        return centerX in x..(x + deleteZone.width) && centerY in y..(y + deleteZone.height)
+    }
+
+    private fun isOverlappingAny(view: View): Boolean {
+        for (i in 0 until addedWidgetContainer.childCount) {
+            val child = addedWidgetContainer.getChildAt(i)
+            if (child == view) continue
+            if (Rect().apply { child.getHitRect(this) }.intersect(
+                    Rect().apply {
+                        set(
+                            view.x.toInt(),
+                            view.y.toInt(),
+                            view.x.toInt() + view.width,
+                            view.y.toInt() + view.height
+                        )
+                    }
+                )
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun saveWidgetToPrefs(widgetId: Int, provider: ComponentName, x: Int, y: Int, w: Int, h: Int) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val arr = JSONArray(prefs.getString(PREF_WIDGET_POSITIONS, "[]"))
+        arr.put(JSONObject().apply {
+            put("id", widgetId)
+            put("provider", provider.flattenToString())
+            put("x", x)
+            put("y", y)
+            put("w", w)
+            put("h", h)
+        })
+        prefs.edit().putString(PREF_WIDGET_POSITIONS, arr.toString()).apply()
+    }
+
+    private fun restoreWidgetsFromPrefs() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val arr = JSONArray(prefs.getString(PREF_WIDGET_POSITIONS, "[]"))
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            val widgetId = obj.getInt("id")
+            val provider = ComponentName.unflattenFromString(obj.getString("provider")) ?: continue
+            val info = appWidgetManager.getAppWidgetInfo(widgetId) ?: continue
+            addWidgetToActivity(info, widgetId)
+        }
+    }
+
+    class WidgetViewHolder(view: View) : RecyclerView.ViewHolder(view)
+}
