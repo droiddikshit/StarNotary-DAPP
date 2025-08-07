@@ -734,3 +734,194 @@ class WidgetPickerBottomSheet(
 
 
 
+
+
+
+package com.example.mynewwidget
+
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.os.Bundle
+import android.view.Gravity
+import android.widget.*
+import com.google.android.material.bottomsheet.BottomSheetDialog
+
+class MainActivity : Activity() {
+
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+    private lateinit var addedWidgetContainer: FrameLayout
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        appWidgetManager = AppWidgetManager.getInstance(this)
+        appWidgetHost = AppWidgetHost(this, 2048)
+        appWidgetHost.startListening()
+
+        addedWidgetContainer = FrameLayout(this)
+        val rootLayout = FrameLayout(this)
+
+        val addWidgetButton = Button(this).apply {
+            text = "Add Widget"
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                topMargin = 50
+            }
+            setOnClickListener {
+                WidgetPickerBottomSheet.show(
+                    activity = this@MainActivity,
+                    appWidgetManager = appWidgetManager,
+                    appWidgetHost = appWidgetHost
+                ) { info, widgetId ->
+                    val hostView = appWidgetHost.createView(this@MainActivity, widgetId, info)
+                    hostView.setAppWidget(widgetId, info)
+                    val container = FrameLayout(this@MainActivity).apply {
+                        layoutParams = FrameLayout.LayoutParams(
+                            info.minWidth.coerceAtLeast(200),
+                            info.minHeight.coerceAtLeast(200)
+                        )
+                        addView(hostView)
+                    }
+                    addedWidgetContainer.addView(container)
+                }
+            }
+        }
+
+        rootLayout.addView(addedWidgetContainer)
+        rootLayout.addView(addWidgetButton)
+        setContentView(rootLayout)
+    }
+}
+
+
+
+
+
+
+
+
+package com.example.mynewwidget
+
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.view.*
+import android.widget.*
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+
+object WidgetPickerBottomSheet {
+
+    private val previewCache = mutableMapOf<ComponentName, Bitmap>()
+    private val widgetIdCache = mutableMapOf<ComponentName, Int>()
+
+    fun show(
+        activity: Activity,
+        appWidgetManager: AppWidgetManager,
+        appWidgetHost: AppWidgetHost,
+        onWidgetSelected: (AppWidgetProviderInfo, Int) -> Unit
+    ) {
+        val dialog = BottomSheetDialog(activity)
+        val recyclerView = RecyclerView(activity).apply {
+            layoutManager = GridLayoutManager(activity, 2)
+        }
+
+        val widgetProviders = appWidgetManager.installedProviders
+        recyclerView.adapter = object : RecyclerView.Adapter<WidgetViewHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): WidgetViewHolder {
+                val layout = LinearLayout(parent.context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(24, 24, 24, 24)
+                }
+                return WidgetViewHolder(layout)
+            }
+
+            override fun onBindViewHolder(holder: WidgetViewHolder, position: Int) {
+                val provider = widgetProviders[position]
+                val previewBitmap = previewCache[provider.provider]
+
+                val layout = holder.itemView as LinearLayout
+                layout.removeAllViews()
+
+                layout.addView(TextView(layout.context).apply {
+                    text = provider.label
+                    textSize = 14f
+                    gravity = Gravity.CENTER_HORIZONTAL
+                })
+
+                if (previewBitmap != null) {
+                    layout.addView(ImageView(layout.context).apply {
+                        setImageBitmap(previewBitmap)
+                        layoutParams = LinearLayout.LayoutParams(400, 400)
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                    })
+                    layout.setOnClickListener {
+                        val cachedId = widgetIdCache[provider.provider] ?: return@setOnClickListener
+                        dialog.dismiss()
+                        onWidgetSelected(provider, cachedId)
+                    }
+                    return
+                }
+
+                val widgetId = appWidgetHost.allocateAppWidgetId()
+                if (!appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)) return
+
+                val hostView = appWidgetHost.createView(layout.context, widgetId, provider)
+                hostView.setAppWidget(widgetId, provider)
+
+                val bitmap = Bitmap.createBitmap(
+                    400,
+                    400,
+                    Bitmap.Config.ARGB_8888
+                )
+                val canvas = Canvas(bitmap)
+                hostView.measure(
+                    View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY)
+                )
+                hostView.layout(0, 0, 400, 400)
+                hostView.draw(canvas)
+
+                if (bitmap != null) {
+                    previewCache[provider.provider] = bitmap
+                    widgetIdCache[provider.provider] = widgetId
+
+                    layout.addView(ImageView(layout.context).apply {
+                        setImageBitmap(bitmap)
+                        layoutParams = LinearLayout.LayoutParams(400, 400)
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                    })
+
+                    layout.setOnClickListener {
+                        dialog.dismiss()
+                        onWidgetSelected(provider, widgetId)
+                    }
+                }
+            }
+
+            override fun getItemCount(): Int = widgetProviders.size
+        }
+
+        dialog.setContentView(recyclerView)
+        dialog.show()
+    }
+
+    class WidgetViewHolder(view: View) : RecyclerView.ViewHolder(view)
+}
+
+
+
+
+
