@@ -501,3 +501,236 @@ class MainActivity : Activity() {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+(((((((((
+
+package com.example.mynewwidget
+
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Context
+import android.graphics.Rect
+import android.os.Bundle
+import android.view.*
+import android.widget.*
+import androidx.fragment.app.FragmentActivity
+import com.example.mynewwidget.databinding.ActivityMainBinding
+
+class MainActivity : FragmentActivity() {
+
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        appWidgetManager = AppWidgetManager.getInstance(this)
+        appWidgetHost = AppWidgetHost(this, 1024)
+        appWidgetHost.startListening()
+
+        binding.addWidgetButton.setOnClickListener {
+            WidgetPickerBottomSheet.newInstance(appWidgetHost, appWidgetManager) {
+                addWidgetToHost(it)
+            }.show(supportFragmentManager, "WidgetPicker")
+        }
+    }
+
+    private fun addWidgetToHost(pair: Pair<AppWidgetProviderInfo, Int>) {
+        val (info, widgetId) = pair
+        val hostView = appWidgetHost.createView(this, widgetId, info)
+        hostView.setAppWidget(widgetId, info)
+
+        val container = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(info.minWidth, info.minHeight)
+            x = 100f
+            y = 100f
+            addView(hostView)
+        }
+
+        binding.widgetContainer.addView(container)
+    }
+}
+
+
+
+
+
+
+
+package com.example.mynewwidget
+
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.example.mynewwidget.databinding.BottomSheetWidgetPickerBinding
+import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+
+class WidgetPickerBottomSheet(
+    private val host: AppWidgetHost,
+    private val manager: AppWidgetManager,
+    private val onWidgetSelected: (Pair<AppWidgetProviderInfo, Int>) -> Unit
+) : BottomSheetDialogFragment() {
+
+    private lateinit var binding: BottomSheetWidgetPickerBinding
+
+    private val previewCache = mutableMapOf<ComponentName, View>()
+    private val widgetIdCache = mutableMapOf<ComponentName, Int>()
+
+    override fun onCreateView(
+        inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?
+    ): View {
+        binding = BottomSheetWidgetPickerBinding.inflate(inflater, container, false)
+        return binding.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        binding.recyclerView.layoutManager = GridLayoutManager(requireContext(), 2)
+
+        val providers = manager.installedProviders.filter {
+            it.minWidth == it.minHeight && it.minWidth <= 250 // simple square filter
+        }
+
+        val adapter = object : RecyclerView.Adapter<WidgetViewHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): WidgetViewHolder {
+                val layout = LinearLayout(parent.context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(16, 16, 16, 16)
+                }
+                return WidgetViewHolder(layout)
+            }
+
+            override fun onBindViewHolder(holder: WidgetViewHolder, position: Int) {
+                val provider = providers[position]
+                val comp = provider.provider
+
+                val layout = holder.itemView as LinearLayout
+                layout.removeAllViews()
+
+                layout.addView(TextView(context).apply {
+                    text = provider.label
+                })
+
+                val cachedView = previewCache[comp]
+                if (cachedView != null) {
+                    layout.addView(cachedView)
+                } else {
+                    val widgetId = widgetIdCache.getOrPut(comp) {
+                        host.allocateAppWidgetId().also {
+                            manager.bindAppWidgetIdIfAllowed(it, provider.provider)
+                        }
+                    }
+
+                    val preview = host.createView(requireContext(), widgetId, provider)
+                    preview.setAppWidget(widgetId, provider)
+
+                    layout.addView(preview)
+                    previewCache[comp] = preview
+                }
+
+                layout.setOnClickListener {
+                    val id = widgetIdCache[comp] ?: return@setOnClickListener
+                    onWidgetSelected(provider to id)
+                    dismiss()
+                }
+            }
+
+            override fun getItemCount(): Int = providers.size
+        }
+
+        binding.recyclerView.adapter = adapter
+    }
+
+    companion object {
+        fun newInstance(
+            host: AppWidgetHost,
+            manager: AppWidgetManager,
+            onWidgetSelected: (Pair<AppWidgetProviderInfo, Int>) -> Unit
+        ) = WidgetPickerBottomSheet(host, manager, onWidgetSelected)
+    }
+
+    class WidgetViewHolder(view: View) : RecyclerView.ViewHolder(view)
+}
+
+
+
+
+
+
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <FrameLayout
+        android:id="@+id/widgetContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <Button
+        android:id="@+id/addWidgetButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="➕ Add Widget"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="16dp"
+        android:backgroundTint="#3F51B5"
+        android:textColor="#FFF" />
+</FrameLayout>
+
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pickerContainer"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="16dp">
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        android:scrollbars="vertical" />
+
+</FrameLayout>
+
+
+
+
+
+
