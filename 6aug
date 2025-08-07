@@ -1,4 +1,4 @@
-package com.example.mynewwidget
+koi package com.example.mynewwidget
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -268,3 +268,45 @@ class MainActivity : Activity() {
 
     class WidgetViewHolder(view: View) : RecyclerView.ViewHolder(view)
 }
+
+
+
+override fun onBindViewHolder(holder: WidgetViewHolder, position: Int) {
+    val provider = filteredWidgets[position]
+
+    val container = holder.itemView as LinearLayout
+    container.removeAllViews()
+    container.addView(TextView(container.context).apply {
+        text = provider.label
+        setPadding(0, 0, 0, 8)
+    })
+
+    // Use preview cache if available
+    val preview: View = previewCache[provider.provider] ?: run {
+        val widgetId = widgetIdCache.getOrPut(provider.provider) {
+            appWidgetHost.allocateAppWidgetId()
+        }
+
+        if (appWidgetManager.bindAppWidgetIdIfAllowed(widgetIdCache[provider.provider]!!, provider.provider)) {
+            val widgetView = appWidgetHost.createView(this@MainActivity, widgetId, provider).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    provider.minWidth.coerceAtLeast(200),
+                    provider.minHeight.coerceAtLeast(200)
+                )
+            }
+
+            previewCache[provider.provider] = widgetView
+            widgetView
+        } else {
+            TextView(container.context).apply { text = "Permission Required" }
+        }
+    }
+
+    container.addView(preview)
+
+    container.setOnClickListener {
+        bottomSheet.dismiss()
+        addWidgetToActivity(provider, widgetIdCache[provider.provider]!!)
+    }
+}
+
