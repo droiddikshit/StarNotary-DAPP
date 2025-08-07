@@ -310,3 +310,194 @@ override fun onBindViewHolder(holder: WidgetViewHolder, position: Int) {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+#####
+
+package com.example.mynewwidget
+
+import android.appwidget.*
+import android.content.ComponentName
+import android.content.Context
+import android.view.*
+import android.widget.*
+import androidx.recyclerview.widget.*
+import com.google.android.material.bottomsheet.BottomSheetDialog
+
+class WidgetPickerBottomSheet(
+    private val context: Context,
+    private val appWidgetManager: AppWidgetManager,
+    private val appWidgetHost: AppWidgetHost,
+    private val previewCache: MutableMap<ComponentName, View>,
+    private val widgetIdCache: MutableMap<ComponentName, Int>,
+    private val onWidgetSelected: (AppWidgetProviderInfo, Int) -> Unit
+) {
+    fun show() {
+        val dialog = BottomSheetDialog(context)
+        val recyclerView = RecyclerView(context).apply {
+            layoutManager = GridLayoutManager(context, 2)
+        }
+
+        val providers = appWidgetManager.installedProviders
+            .filter { it.minWidth <= 250 && it.minHeight <= 250 } // You can adjust filter
+
+        recyclerView.adapter = object : RecyclerView.Adapter<WidgetViewHolder>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): WidgetViewHolder {
+                val layout = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(16, 16, 16, 16)
+                }
+                return WidgetViewHolder(layout)
+            }
+
+            override fun onBindViewHolder(holder: WidgetViewHolder, position: Int) {
+                val provider = providers[position]
+
+                val preview = previewCache[provider.provider] ?: run {
+                    val widgetId = widgetIdCache.getOrPut(provider.provider) {
+                        appWidgetHost.allocateAppWidgetId()
+                    }
+
+                    if (!appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)) {
+                        return
+                    }
+
+                    val view = appWidgetHost.createView(context, widgetId, provider)
+                    view.setAppWidget(widgetId, provider)
+                    previewCache[provider.provider] = view
+                    view
+                }
+
+                (holder.itemView as ViewGroup).apply {
+                    removeAllViews()
+                    addView(TextView(context).apply { text = provider.label })
+                    addView(preview)
+                    setOnClickListener {
+                        dialog.dismiss()
+                        val widgetId = widgetIdCache[provider.provider]!!
+                        onWidgetSelected(provider, widgetId)
+                    }
+                }
+            }
+
+            override fun getItemCount(): Int = providers.size
+        }
+
+        dialog.setContentView(recyclerView)
+        dialog.show()
+    }
+
+    class WidgetViewHolder(view: View) : RecyclerView.ViewHolder(view)
+}
+
+
+
+
+
+
+
+
+
+
+
+package com.example.mynewwidget
+
+import android.app.Activity
+import android.appwidget.*
+import android.content.ComponentName
+import android.content.Context
+import android.graphics.Rect
+import android.os.Bundle
+import android.view.*
+import android.widget.*
+import org.json.JSONArray
+import org.json.JSONObject
+
+class MainActivity : Activity() {
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+    private lateinit var container: FrameLayout
+    private val previewCache = mutableMapOf<ComponentName, View>()
+    private val widgetIdCache = mutableMapOf<ComponentName, Int>()
+
+    private val PREFS_NAME = "widget_prefs"
+    private val PREF_KEY = "widget_list"
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        appWidgetManager = AppWidgetManager.getInstance(this)
+        appWidgetHost = AppWidgetHost(this, 2048)
+        appWidgetHost.startListening()
+
+        val root = FrameLayout(this)
+        container = FrameLayout(this)
+
+        val addButton = Button(this).apply {
+            text = "Add Widget"
+            setOnClickListener {
+                WidgetPickerBottomSheet(
+                    context = this@MainActivity,
+                    appWidgetManager = appWidgetManager,
+                    appWidgetHost = appWidgetHost,
+                    previewCache = previewCache,
+                    widgetIdCache = widgetIdCache
+                ) { info, id ->
+                    addWidget(info, id)
+                }.show()
+            }
+        }
+
+        root.addView(container)
+        root.addView(addButton, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        ))
+
+        setContentView(root)
+    }
+
+    private fun addWidget(info: AppWidgetProviderInfo, widgetId: Int) {
+        val hostView = appWidgetHost.createView(this, widgetId, info)
+        hostView.setAppWidget(widgetId, info)
+
+        val frame = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(info.minWidth, info.minHeight)
+            x = 100f
+            y = 100f
+            addView(hostView)
+        }
+
+        container.addView(frame)
+        saveWidget(widgetId, info.provider, 100, 100)
+    }
+
+    private fun saveWidget(id: Int, provider: ComponentName, x: Int, y: Int) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val arr = JSONArray(prefs.getString(PREF_KEY, "[]"))
+        arr.put(JSONObject().apply {
+            put("id", id)
+            put("provider", provider.flattenToString())
+            put("x", x)
+            put("y", y)
+        })
+        prefs.edit().putString(PREF_KEY, arr.toString()).apply()
+    }
+}
+
+
+
+
+
+
