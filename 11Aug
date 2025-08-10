@@ -1,0 +1,351 @@
+package com.example.mynewwidget
+
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.graphics.drawable.toBitmap
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import java.lang.reflect.Method
+
+
+class WidgetPickerSheetFragmentDirect : BottomSheetDialogFragment() {
+
+    private lateinit var host: AppWidgetHost
+    private lateinit var mgr: AppWidgetManager
+    private var onChosen: ((AppWidgetProviderInfo, Int) -> Unit)? = null
+
+    private lateinit var providers: List<AppWidgetProviderInfo>
+    private val previewBitmaps = mutableMapOf<ComponentName, Bitmap>()
+
+    private var pendingProviderForBind: AppWidgetProviderInfo? = null
+    private var pendingAppWidgetId: Int = -1
+
+    companion object {
+        fun newInstance(
+            host: AppWidgetHost,
+            manager: AppWidgetManager,
+            onWidgetChosen: (AppWidgetProviderInfo, Int) -> Unit
+        ) = WidgetPickerSheetFragmentDirect().apply {
+            this.host = host
+            this.mgr = manager
+            this.onChosen = onWidgetChosen
+        }
+    }
+
+    private val bindLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { res ->
+        if (res.resultCode == Activity.RESULT_OK) {
+            val info = pendingProviderForBind ?: return@registerForActivityResult
+            val id = pendingAppWidgetId.takeIf { it != -1 } ?: return@registerForActivityResult
+            onChosen?.invoke(info, id)
+            dismissAllowingStateLoss()
+        } else {
+            pendingProviderForBind = null
+            pendingAppWidgetId = -1
+        }
+    }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, state: Bundle?): View {
+        val rv = RecyclerView(requireContext()).apply {
+            layoutManager = GridLayoutManager(requireContext(), 2)
+        }
+
+        providers = mgr.installedProviders
+
+        rv.adapter = object : RecyclerView.Adapter<VH>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                val item = inflater.inflate(R.layout.item_widget_preview, parent, false)
+                return VH(item)
+            }
+
+            override fun onBindViewHolder(holder: VH, position: Int) {
+                val info = providers[position]
+                holder.label.text = info.label
+
+                //  cached preview
+                previewBitmaps[info.provider]?.let { bmp ->
+                    holder.preview.setImageBitmap(bmp)
+                    holder.itemView.setOnClickListener { onItemTapped(info) }
+                    return
+                }
+
+                // try official preview drawable
+                val d = info.tryLoadPreviewImageCompat(requireContext())
+                if (d != null) {
+                    val bmp = d.toCompatBitmap()
+                    previewBitmaps[info.provider] = bmp
+                    holder.preview.setImageBitmap(bmp)
+                    holder.itemView.setOnClickListener { onItemTapped(info) }
+                    return
+                }
+
+                val tmpId = host.allocateAppWidgetId()
+                val canBind = try { mgr.bindAppWidgetIdIfAllowed(tmpId, info.provider) } catch (_: Exception) { false }
+                if (canBind) {
+                    val hv = host.createView(requireActivity(), tmpId, info).apply {
+                        setAppWidget(tmpId, info)
+                    }
+                    val w = info.minWidth.coerceIn(dp(200), dp(600))
+                    val h = info.minHeight.coerceIn(dp(200), dp(600))
+                    hv.measure(
+                        View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY)
+                    )
+                    hv.layout(0, 0, w, h)
+                    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+                        hv.draw(Canvas(it))
+                    }
+                    previewBitmaps[info.provider] = bmp
+                    holder.preview.setImageBitmap(bmp)
+                    holder.itemView.setOnClickListener { onItemTapped(info) }
+                } else {
+                    // 4) final fallback: app icon
+                    val icon = info.tryLoadPreviewImageCompat(requireContext())
+                    holder.preview.setImageDrawable(icon)
+                    holder.itemView.setOnClickListener { onItemTapped(info) }
+                }
+            }
+
+            override fun getItemCount(): Int = providers.size
+            override fun getItemId(position: Int): Long =
+                providers[position].provider.flattenToShortString().hashCode().toLong()
+        }.apply { setHasStableIds(true) }
+
+        return rv
+    }
+
+    private fun onItemTapped(info: AppWidgetProviderInfo) {
+        val id = host.allocateAppWidgetId()
+        val cn = info.provider
+
+        val bound = try { mgr.bindAppWidgetIdIfAllowed(id, cn) } catch (_: Exception) { false }
+        if (bound) {
+            onChosen?.invoke(info, id)
+            dismissAllowingStateLoss()
+            return
+        }
+
+        pendingProviderForBind = info
+        pendingAppWidgetId = id
+        val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, cn)
+        }
+        bindLauncher.launch(intent)
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val label: TextView = v.findViewById(R.id.widgetLabel)
+        val preview: ImageView = v.findViewById(R.id.widgetPreview)
+    }
+}
+
+fun AppWidgetProviderInfo.tryLoadPreviewImageCompat(ctx: Context): Drawable? {
+    try {
+        val m2: Method = this.javaClass.getMethod(
+            "loadPreviewImage", Context::class.java, Int::class.javaPrimitiveType
+        )
+        (m2.invoke(this, ctx, -1) as? Drawable)?.let { return it }
+    } catch (_: NoSuchMethodException) {
+    } catch (_: Throwable) { /* ignore */ }
+
+    return try {
+        val m1: Method = this.javaClass.getMethod("loadPreviewImage", Context::class.java)
+        m1.invoke(this, ctx) as? Drawable
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+private fun Drawable.toCompatBitmap(): Bitmap =
+    when (this) {
+        is BitmapDrawable -> this.bitmap
+        else -> this.toBitmap()
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+package com.example.mynewwidget
+
+import android.os.Bundle
+import android.view.Gravity
+import android.widget.Button
+import android.widget.FrameLayout
+import androidx.appcompat.app.AppCompatActivity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+    private lateinit var widgetCanvas: FrameLayout
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        appWidgetManager = AppWidgetManager.getInstance(this)
+        appWidgetHost = AppWidgetHost(this, 2048).apply { startListening() }
+
+        val root = FrameLayout(this)
+        widgetCanvas = FrameLayout(this)
+
+        val addButton = Button(this).apply {
+            text = "Add Widget"
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                topMargin = dp(16)
+            }
+            setOnClickListener {
+                WidgetPickerSheetFragmentDirect.newInstance(
+                    host = appWidgetHost,
+                    manager = appWidgetManager
+                ) { info, widgetId ->
+                    addWidgetAt(info, widgetId)
+                }.show(supportFragmentManager, "WidgetPickerSheetDirect")
+            }
+        }
+
+        root.addView(widgetCanvas)
+        root.addView(addButton)
+        setContentView(root)
+    }
+
+    private fun addWidgetAt(info: AppWidgetProviderInfo, widgetId: Int, x: Int? = null, y: Int? = null) {
+        val hostView = appWidgetHost.createView(this, widgetId, info).apply {
+            setAppWidget(widgetId, info)
+        }
+
+        val w = info.minWidth.coerceAtLeast(dp(200))
+        val h = info.minHeight.coerceAtLeast(dp(200))
+
+        val (dropX, dropY) =
+            if (x != null && y != null) x to y
+            else findFreeSpot(w, h)
+
+        val frame = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(w, h)
+            this.x = dropX.toFloat()
+            this.y = dropY.toFloat()
+            addView(hostView)
+        }
+
+        // Hint sizes in dp (helps Samsung/MIUI)
+        val d = resources.displayMetrics.density
+        appWidgetManager.updateAppWidgetOptions(widgetId, android.os.Bundle().apply {
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,  (w / d).toInt())
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, (h / d).toInt())
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH,  (w / d).toInt())
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, (h / d).toInt())
+        })
+
+        widgetCanvas.addView(frame)
+    }
+
+    private fun findFreeSpot(w: Int, h: Int, margin: Int = dp(12)): Pair<Int, Int> {
+        val step = dp(24)
+        val maxW = widgetCanvas.width.coerceAtLeast(w + margin)
+        val maxH = widgetCanvas.height.coerceAtLeast(h + margin)
+
+        fun intersects(x: Int, y: Int): Boolean {
+            for (i in 0 until widgetCanvas.childCount) {
+                val c = widgetCanvas.getChildAt(i)
+                val cx = c.x.toInt()
+                val cy = c.y.toInt()
+                val cw = c.width
+                val ch = c.height
+                val overlapX = x < cx + cw + margin && x + w + margin > cx
+                val overlapY = y < cy + ch + margin && y + h + margin > cy
+                if (overlapX && overlapY) return true
+            }
+            return false
+        }
+
+        var y = dp(72)
+        while (y + h < maxH) {
+            var x = dp(16)
+            while (x + w < maxW) {
+                if (!intersects(x, y)) return x to y
+                x += step
+            }
+            y += step
+        }
+        return dp(16) to dp(72) // fallback
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    override fun onDestroy() {
+        super.onDestroy()
+        appWidgetHost.stopListening()
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- res/layout/item_widget_preview.xml -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/itemRoot"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/widgetLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Widget Label"
+        android:textColor="#000000"
+        android:textSize="14sp"
+        android:paddingBottom="6dp" />
+
+    <ImageView
+        android:id="@+id/widgetPreview"
+        android:layout_width="match_parent"
+        android:layout_height="160dp"
+        android:scaleType="fitCenter"
+        android:background="#DDDDDD" />
+</LinearLayout>
