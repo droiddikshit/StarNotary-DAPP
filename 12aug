@@ -1,4 +1,4 @@
-// file: WidgetHostController.kt
+no// file: WidgetHostController.kt
 package com.example.mynewwidget
 
 import android.appwidget.AppWidgetHost
@@ -159,6 +159,10 @@ bottomSheet.setOnDismissListener {
 
 
 
-
+dependencies {
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:<latest>"
+    implementation "androidx.lifecycle:lifecycle-common-java8:<latest>"
+    // If you use ViewPager2 with Fragments, you already transitively have lifecycle, but keep these explicit.
+}
 
 
