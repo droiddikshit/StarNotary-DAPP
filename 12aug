@@ -351,4 +351,14 @@ import androidx.lifecycle.ViewTreeLifecycleOwner
 
 
 
+dependencies {
+    // EITHER use the BOM …
+    implementation(platform("androidx.lifecycle:lifecycle-bom:2.8.4"))
+    implementation("androidx.lifecycle:lifecycle-runtime")          // <- contains ViewTreeLifecycleOwner
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx")      // optional
+    implementation("androidx.lifecycle:lifecycle-common-java8")     // for DefaultLifecycleObserver
+
+    // … OR pin the exact artifact:
+    // implementation "androidx.lifecycle:lifecycle-runtime:2.8.4"
+}
 
