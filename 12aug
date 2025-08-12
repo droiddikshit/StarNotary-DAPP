@@ -166,3 +166,48 @@ dependencies {
 }
 
 
+
+// file: WidgetHostController.kt
+package com.example.mynewwidget
+
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.content.Context
+import android.os.Bundle
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+
+class WidgetHostController(
+    appContext: Context,
+    hostId: Int = 1024
+) : DefaultLifecycleObserver {
+
+    val appWidgetManager: AppWidgetManager = AppWidgetManager.getInstance(appContext)
+    val appWidgetHost: AppWidgetHost = AppWidgetHost(appContext, hostId)
+
+    override fun onStart(owner: LifecycleOwner) { appWidgetHost.startListening() }
+    override fun onStop(owner: LifecycleOwner)  { appWidgetHost.stopListening()  }
+
+    fun applySize(hostView: AppWidgetHostView) {
+        val w = hostView.width; val h = hostView.height
+        if (w <= 0 || h <= 0) return
+        val d = hostView.resources.displayMetrics.density
+        val opts = Bundle().apply {
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,  (w / d).toInt())
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH,  (w / d).toInt())
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, (h / d).toInt())
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, (h / d).toInt())
+        }
+        hostView.updateAppWidgetOptions(opts)
+        hostView.updateAppWidgetSize(
+            opts,
+            opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH),
+            opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT),
+            opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH),
+            opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT)
+        )
+    }
+}
+
+
