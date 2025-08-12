@@ -211,3 +211,130 @@ class WidgetHostController(
 }
 
 
+
+
+
+// file: WidgetPageView.kt
+package com.example.mynewwidget
+
+import android.annotation.SuppressLint
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.graphics.Rect
+import android.util.AttributeSet
+import android.view.*
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.TextView
+import android.widget.Toast
+import androidx.lifecycle.ViewTreeLifecycleOwner
+import kotlin.math.max
+
+class WidgetPageView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null
+) : FrameLayout(context, attrs) {
+
+    private val controller = WidgetHostController(context.applicationContext)
+    private val appWidgetManager get() = controller.appWidgetManager
+    private val appWidgetHost get() = controller.appWidgetHost
+
+    private val canvas = FrameLayout(context)
+    private val deleteZone = ImageView(context).apply {
+        setImageResource(android.R.drawable.ic_menu_delete)
+        layoutParams = LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        visibility = View.GONE; alpha = 0.85f; elevation = dp(8).toFloat()
+    }
+    private val addBtn = TextView(context).apply {
+        text = "➕ Add Widget"; textSize = 16f
+        setBackgroundColor(0xFF3F51B5.toInt()); setTextColor(0xFFFFFFFF.toInt())
+        setPadding(dp(16), dp(8), dp(16), dp(8))
+        layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
+        elevation = dp(8).toFloat()
+        setOnClickListener { showPicker() }
+    }
+
+    init {
+        isClickable = true; isFocusable = true
+        addView(canvas, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(addBtn); addView(deleteZone)
+
+        // Attach controller to the page's lifecycle (this is the androidx bit you now have)
+        ViewTreeLifecycleOwner.get(this)?.lifecycle?.addObserver(controller)
+
+        // Fallback if owner not yet available at init: register when attached.
+        addOnAttachStateChangeListener(object : OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                ViewTreeLifecycleOwner.get(this@WidgetPageView)?.lifecycle?.addObserver(controller)
+            }
+            override fun onViewDetachedFromWindow(v: View) { /* lifecycle removes observers automatically */ }
+        })
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun showPicker() {
+        WidgetPickerBottomSheet(
+            context = context,
+            appWidgetManager = appWidgetManager,
+            appWidgetHost = appWidgetHost
+        ) { provider, widgetId ->
+            addWidget(provider, widgetId)
+        }.show()
+    }
+
+    fun addWidget(provider: AppWidgetProviderInfo, widgetId: Int) {
+        val w = max(provider.minWidth, 400)
+        val h = max(provider.minHeight, 400)
+        val hostView = appWidgetHost.createView(context, widgetId, provider).apply {
+            setAppWidget(widgetId, provider)
+            layoutParams = LayoutParams(w, h)
+        }
+        val container = FrameLayout(context).apply {
+            layoutParams = LayoutParams(w, h)
+            x = dp(100).toFloat(); y = dp(100).toFloat()
+            addView(hostView)
+            setOnTouchListener(touchListener(this, widgetId, provider))
+        }
+        canvas.addView(container)
+
+        // Samsung: size negotiation AFTER layout (next frame) and after moves
+        container.post { controller.applySize(hostView as AppWidgetHostView) }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun touchListener(widget: View, widgetId: Int, provider: AppWidgetProviderInfo): OnTouchListener {
+        var dX = 0f; var dY = 0f; var dragging = false
+        return OnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { dX = widget.x - e.rawX; dY = widget.y - e.rawY; dragging = false; true }
+                MotionEvent.ACTION_MOVE -> { widget.x = e.rawX + dX; widget.y = e.rawY + dY; deleteZone.visibility = View.VISIBLE; dragging = true; true }
+                MotionEvent.ACTION_UP -> {
+                    deleteZone.visibility = View.GONE
+                    if (isOverDeleteZone(widget)) {
+                        (widget.parent as? ViewGroup)?.removeView(widget)
+                        Toast.makeText(context, "🗑️ Widget Removed", Toast.LENGTH_SHORT).show()
+                    } else if (dragging) {
+                        (widget.getChildAt(0) as? AppWidgetHostView)?.let { controller.applySize(it) }
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun isOverDeleteZone(view: View): Boolean {
+        val zone = Rect()
+        deleteZone.getGlobalVisibleRect(zone)
+        val loc = IntArray(2); getLocationOnScreen(loc)
+        val cx = (view.x + view.width / 2).toInt() + loc[0]
+        val cy = (view.y + view.height / 2).toInt() + loc[1]
+        return zone.contains(cx, cy)
+    }
+}
+
+
+
