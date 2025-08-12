@@ -48,3 +48,117 @@ class WidgetHostController(
         )
     }
 }
+
+
+
+
+// In your pager page view or the place where you currently create the widgets:
+class WidgetPageView(context: Context) : FrameLayout(context) {
+
+    private val controller = WidgetHostController(context.applicationContext)
+    private val appWidgetManager get() = controller.appWidgetManager
+    private val appWidgetHost get() = controller.appWidgetHost
+
+    init {
+        // Bind to lifecycle if available (ViewPager2 + Fragment -> this is non-null)
+        androidx.lifecycle.ViewTreeLifecycleOwner.get(this)?.lifecycle?.addObserver(controller)
+
+        // Fallback: if no lifecycle owner exists, manage start/stop by visibility
+        addOnAttachStateChangeListener(object : OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: android.view.View) {
+                if (androidx.lifecycle.ViewTreeLifecycleOwner.get(this@WidgetPageView) == null) {
+                    appWidgetHost.startListening()
+                }
+            }
+            override fun onViewDetachedFromWindow(v: android.view.View) {
+                if (androidx.lifecycle.ViewTreeLifecycleOwner.get(this@WidgetPageView) == null) {
+                    appWidgetHost.stopListening()
+                }
+            }
+        })
+    }
+
+    // Important for pagers: fragment/page visibility flips without detach. Handle both:
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        val hasLifecycle = androidx.lifecycle.ViewTreeLifecycleOwner.get(this) != null
+        if (!hasLifecycle) {
+            if (visibility == VISIBLE) appWidgetHost.startListening() else appWidgetHost.stopListening()
+        }
+    }
+
+    override fun onVisibilityAggregated(isVisible: Boolean) { // ViewPager2 path
+        super.onVisibilityAggregated(isVisible)
+        val hasLifecycle = androidx.lifecycle.ViewTreeLifecycleOwner.get(this) != null
+        if (!hasLifecycle) {
+            if (isVisible) appWidgetHost.startListening() else appWidgetHost.stopListening()
+        }
+    }
+
+    /** When user picks a widget: */
+    fun addWidget(provider: AppWidgetProviderInfo, widgetId: Int) {
+        val w = provider.minWidth.coerceAtLeast(400)
+        val h = provider.minHeight.coerceAtLeast(400)
+
+        val hostView = appWidgetHost.createView(context, widgetId, provider).apply {
+            setAppWidget(widgetId, provider)
+            layoutParams = LayoutParams(w, h)
+        }
+
+        val container = FrameLayout(context).apply {
+            layoutParams = LayoutParams(w, h)
+            x = 100f; y = 100f
+            addView(hostView)
+            // keep your touch listener etc.
+        }
+
+        addView(container)
+
+        // Key bit for Samsung: apply size AFTER it's laid out (next frame), and again when moved/resized.
+        container.post {
+            controller.applySize(hostView)
+        }
+    }
+
+    /** Launch your existing bottom sheet, but use controller’s host/manager */
+    fun showPicker() {
+        WidgetPickerBottomSheet(
+            context = context,
+            appWidgetManager = appWidgetManager,
+            appWidgetHost = appWidgetHost
+        ) { provider, widgetId ->
+            addWidget(provider, widgetId)
+        }.show()
+    }
+}
+
+
+
+
+// Wherever you know the "selected page" signal:
+fun onPageSelected(isSelected: Boolean) {
+    if (isSelected) controller.appWidgetHost.startListening()
+    else controller.appWidgetHost.stopListening()
+}
+
+
+
+
+
+// inside your adapter’s onBindViewHolder in the bottom sheet:
+val widgetId = appWidgetHost.allocateAppWidgetId()
+val bound = appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)
+if (!bound) {
+    appWidgetHost.deleteAppWidgetId(widgetId)
+    return
+}
+// on sheet dismiss without selection:
+bottomSheet.setOnDismissListener {
+    // delete any preview-only allocated ids you tracked
+}
+
+
+
+
+
+
