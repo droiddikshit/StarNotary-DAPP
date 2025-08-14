@@ -675,3 +675,388 @@ private fun AppWidgetManager.isBoundAppWidget(id: Int): Boolean = getAppWidgetIn
 
 
 
+
+
+
+
+
+
+
+
+
+
+package your.package.name
+
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.util.Log
+import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.TextView
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+
+/**
+ * BottomSheet widget picker that shows live previews.
+ * - Allocates/binds on attach; releases on detach.
+ * - When user picks a cell, marks it "consumed" so the id survives sheet dismiss.
+ */
+class WidgetPickerBottomSheet(
+    private val context: Context,
+    private val appWidgetManager: AppWidgetManager,
+    private val appWidgetHost: AppWidgetHost,
+    private val onWidgetSelected: (AppWidgetProviderInfo, Int) -> Unit
+) {
+    private val tag = "WidgetPickerSheet"
+
+    fun show() {
+        val sheet = BottomSheetDialog(context)
+        val rv = RecyclerView(context).apply {
+            layoutManager = GridLayoutManager(context, 2)
+            setHasFixedSize(true)
+        }
+
+        val providers: List<AppWidgetProviderInfo> = appWidgetManager.installedProviders
+
+        rv.adapter = object : RecyclerView.Adapter<VH>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                val cellHeightPx = (200 * parent.resources.displayMetrics.density).toInt()
+                val root = FrameLayout(parent.context).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        cellHeightPx
+                    )
+                    isClickable = true
+                }
+                return VH(root)
+            }
+
+            override fun onBindViewHolder(holder: VH, position: Int) {
+                holder.bind(providers[position]) { prov, id ->
+                    // 1) hand off the id to caller
+                    onWidgetSelected(prov, id)
+                    // 2) dismiss AFTER handoff (detach will run but skip deletion)
+                    sheet.dismiss()
+                }
+            }
+
+            override fun getItemCount() = providers.size
+
+            override fun onViewAttachedToWindow(holder: VH) {
+                holder.attach(appWidgetHost, appWidgetManager)
+            }
+
+            override fun onViewDetachedFromWindow(holder: VH) {
+                holder.detach(appWidgetHost)
+            }
+
+            override fun onViewRecycled(holder: VH) {
+                holder.detach(appWidgetHost)
+                super.onViewRecycled(holder)
+            }
+        }
+
+        sheet.setContentView(rv)
+        sheet.show()
+    }
+
+    private inner class VH(val root: FrameLayout) : RecyclerView.ViewHolder(root) {
+        private var provider: AppWidgetProviderInfo? = null
+        private var widgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+        private var hostView: AppWidgetHostView? = null
+
+        /** If true, don't delete id on detach (user has picked this cell). */
+        private var consumedByPick = false
+
+        fun bind(
+            prov: AppWidgetProviderInfo,
+            onPick: (AppWidgetProviderInfo, Int) -> Unit
+        ) {
+            provider = prov
+            consumedByPick = false
+
+            root.setOnClickListener {
+                val p = provider ?: return@setOnClickListener
+
+                // If user taps before attach, allocate now.
+                if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+                    widgetId = appWidgetHost.allocateAppWidgetId()
+                }
+
+                // Try to bind silently; OK if false (Fragment will show system sheet).
+                appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, p.provider)
+
+                consumedByPick = true  // keep the id alive after dismiss
+                onPick(p, widgetId)
+            }
+        }
+
+        fun attach(host: AppWidgetHost, mgr: AppWidgetManager) {
+            val p = provider ?: return
+
+            if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+                widgetId = host.allocateAppWidgetId()
+                Log.d(tag, "allocate id=$widgetId for ${p.provider}")
+            }
+
+            val bound = mgr.bindAppWidgetIdIfAllowed(widgetId, p.provider)
+            root.removeAllViews()
+
+            if (bound) {
+                hostView = host.createView(root.context, widgetId, p).apply {
+                    setAppWidget(widgetId, p)
+                    layoutParams = FrameLayout.LayoutParams(
+                        p.minWidth, p.minHeight, Gravity.CENTER
+                    )
+                }
+                root.addView(hostView)
+            } else {
+                // Fallback label if we can't bind silently (non-system app)
+                root.addView(TextView(root.context).apply {
+                    text = p.loadLabel(root.context.packageManager)
+                    gravity = Gravity.CENTER
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                })
+            }
+        }
+
+        fun detach(host: AppWidgetHost) {
+            root.removeAllViews()
+            hostView = null
+            if (!consumedByPick && widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                host.deleteAppWidgetId(widgetId)
+                widgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+package your.package.name
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Intent
+import android.graphics.Rect
+import android.os.Bundle
+import android.view.*
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.fragment.app.Fragment
+
+/**
+ * Fragment that owns the AppWidgetHost lifecycle and canvas for placed widgets.
+ * Layout requirements:
+ *  - R.layout.widget_fragment_layout
+ *  - View id R.id.add_widget_button
+ *  - FrameLayout id R.id.widgets_fragment_container
+ */
+class WidgetsFragment : Fragment(R.layout.widget_fragment_layout) {
+
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+
+    private lateinit var addWidgetBtn: View
+    private lateinit var widgetsLayoutContainer: FrameLayout
+    private lateinit var deleteZone: ImageView
+
+    // Store pending selection when we need to ask system to grant bind permission
+    private var pendingProvider: AppWidgetProviderInfo? = null
+    private var pendingWidgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+
+    // ActivityResult launcher for ACTION_APPWIDGET_BIND
+    private val bindWidgetLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val id = result.data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1) ?: -1
+            val info = if (id > 0) appWidgetManager.getAppWidgetInfo(id) else pendingProvider?.let {
+                // Some OEMs don't echo back id; fall back to our pending id.
+                appWidgetManager.getAppWidgetInfo(pendingWidgetId)
+            }
+
+            val finalId = if (id > 0) id else pendingWidgetId
+            val finalInfo = info ?: pendingProvider
+            if (finalInfo != null && finalId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                addWidgetToSurface(finalInfo, finalId)
+            } else {
+                Toast.makeText(requireContext(), "Binding canceled", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(requireContext(), "Binding denied", Toast.LENGTH_SHORT).show()
+        }
+
+        // clear pending state
+        pendingProvider = null
+        pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        appWidgetManager = AppWidgetManager.getInstance(requireContext())
+        appWidgetHost = AppWidgetHost(requireContext(), /*hostId=*/1024)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        appWidgetHost.startListening()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        appWidgetHost.stopListening()
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        addWidgetBtn = view.findViewById(R.id.add_widget_button)
+        widgetsLayoutContainer = view.findViewById(R.id.widgets_fragment_container)
+
+        // Optional trash zone for drag-to-delete
+        deleteZone = ImageView(requireContext()).apply {
+            setImageResource(android.R.drawable.ic_menu_delete)
+            alpha = 0.85f
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                resources.displayMetrics.widthPixels,
+                (56 * resources.displayMetrics.density).toInt(),
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            )
+        }
+        (view as ViewGroup).addView(deleteZone)
+
+        addWidgetBtn.setOnClickListener { showWidgetPickerBottomSheet() }
+    }
+
+    private fun showWidgetPickerBottomSheet() {
+        WidgetPickerBottomSheet(
+            context = requireActivity(),
+            appWidgetManager = appWidgetManager,
+            appWidgetHost = appWidgetHost
+        ) { provider, widgetId ->
+            // Ensure we are allowed; if not, launch system grant UI.
+            if (!ensureBindOrRequest(provider, widgetId)) return@WidgetPickerBottomSheet
+            addWidgetToSurface(provider, widgetId)
+        }.show()
+    }
+
+    /**
+     * Try to bind silently; if not allowed, launch ACTION_APPWIDGET_BIND.
+     * Returns true if already bound/allowed, false if flow continues via launcher.
+     */
+    private fun ensureBindOrRequest(provider: AppWidgetProviderInfo, widgetId: Int): Boolean {
+        val ok = appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)
+        if (ok) return true
+
+        // Request user approval via system UI
+        pendingProvider = provider
+        pendingWidgetId = widgetId
+
+        val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider.provider)
+            // Optional: restrict to categories supported by the host
+            // putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, UserHandle.myUserId())
+        }
+        bindWidgetLauncher.launch(intent)
+        return false
+    }
+
+    private fun addWidgetToSurface(provider: AppWidgetProviderInfo, widgetId: Int) {
+        // Double-check bound (some OEMs require this even after approval)
+        if (appWidgetManager.getAppWidgetInfo(widgetId) == null) {
+            val ok = appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)
+            if (!ok) {
+                Toast.makeText(requireContext(), "Binding not allowed", Toast.LENGTH_SHORT).show()
+                return
+            }
+        }
+
+        val hostView: AppWidgetHostView =
+            appWidgetHost.createView(requireActivity(), widgetId, provider).apply {
+                setAppWidget(widgetId, provider)
+                layoutParams = FrameLayout.LayoutParams(provider.minWidth, provider.minHeight)
+            }
+
+        widgetsLayoutContainer.addView(hostView)
+        hostView.setOnTouchListener(widgetTouchListener(hostView, widgetId))
+    }
+
+    // ------------ Optional drag + delete UX ------------
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun widgetTouchListener(widget: View, widgetId: Int): View.OnTouchListener {
+        var dX = 0f
+        var dY = 0f
+        var dragging = false
+
+        return View.OnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dX = widget.x - event.rawX
+                    dY = widget.y - event.rawY
+                    dragging = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    widget.x = event.rawX + dX
+                    widget.y = event.rawY + dY
+                    deleteZone.visibility = View.VISIBLE
+                    dragging = true
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    deleteZone.visibility = View.GONE
+                    if (dragging && isOverDeleteZone(widget)) {
+                        (widget.parent as? ViewGroup)?.removeView(widget)
+                        appWidgetHost.deleteAppWidgetId(widgetId)
+                        Toast.makeText(requireContext(), "Widget removed", Toast.LENGTH_SHORT).show()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun isOverDeleteZone(v: View): Boolean {
+        val trashRect = Rect()
+        deleteZone.getHitRect(trashRect)
+        val viewRect = Rect(
+            v.x.toInt(), v.y.toInt(),
+            (v.x + v.width).toInt(), (v.y + v.height).toInt()
+        )
+        return Rect.intersects(trashRect, viewRect)
+    }
+}
+
+----
+
+
+
+
+
+
+
+
+
+
