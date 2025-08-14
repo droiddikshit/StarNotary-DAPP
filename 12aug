@@ -1892,3 +1892,143 @@ class WidgetPickerBottomSheet(
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+H
+
+package your.package.name
+
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.os.Bundle
+import android.util.AttributeSet
+import android.util.Log
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
+import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.isVisible
+import your.package.name.databinding.LayoutWidgetsBinding
+
+class WidgetsLayout @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : FrameLayout(context, attrs, defStyleAttr) {
+
+    companion object {
+        private const val TAG = "WidgetsLayout"
+        private const val APPWIDGET_HOST_ID = 1024
+    }
+
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+
+    private lateinit var bindLauncher: ActivityResultLauncher<Intent>
+    private var pendingId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+    private var pendingProvider: AppWidgetProviderInfo? = null
+
+    private var viewBinding: LayoutWidgetsBinding =
+        LayoutWidgetsBinding.inflate(LayoutInflater.from(context), this, true)
+
+    var canvas: FrameLayout = viewBinding.widgetsLayoutContainer
+    var addBtn: ImageButton = viewBinding.addButton
+    var deleteZone: ImageView = viewBinding.deleteZone
+
+    /**
+     * Call this from Activity.onCreate() before Activity STARTED
+     */
+    fun initLauncher(activity: ComponentActivity) {
+        bindLauncher = activity.registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { r ->
+            val id = r.data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingId)
+                ?: pendingId
+            val info = appWidgetManager.getAppWidgetInfo(id) ?: pendingProvider
+            if (r.resultCode == Activity.RESULT_OK &&
+                info != null && id != AppWidgetManager.INVALID_APPWIDGET_ID
+            ) {
+                placeWidget(info, id)
+            }
+            pendingProvider = null
+            pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+
+        appWidgetManager = AppWidgetManager.getInstance(context)
+        appWidgetHost = AppWidgetHost(context.applicationContext, APPWIDGET_HOST_ID)
+        appWidgetHost.startListening()
+
+        addBtn.isVisible = true
+        addBtn.setOnClickListener {
+            openWidgetPicker()
+        }
+
+        Log.i(TAG, "onAttachedToWindow: WidgetsLayout attached")
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        appWidgetHost.stopListening()
+    }
+
+    private fun openWidgetPicker() {
+        val providers = appWidgetManager.installedProviders
+        // For now, just take first provider to test
+        val p = providers.firstOrNull() ?: return
+        val id = appWidgetHost.allocateAppWidgetId()
+        val bound = appWidgetManager.bindAppWidgetIdIfAllowed(id, p.provider)
+        if (bound) {
+            placeWidget(p, id)
+        } else {
+            pendingId = id
+            pendingProvider = p
+            val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, p.provider)
+            }
+            bindLauncher.launch(intent)
+        }
+    }
+
+    private fun placeWidget(info: AppWidgetProviderInfo, id: Int) {
+        val hostView = appWidgetHost.createView(context, id, info)
+        val minW = info.minWidth
+        val minH = info.minHeight
+        val density = context.resources.displayMetrics.density
+        val opts = Bundle().apply {
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, (minW / density).toInt())
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, (minH / density).toInt())
+        }
+        appWidgetManager.updateAppWidgetOptions(id, opts)
+        hostView.setAppWidget(id, info)
+
+        canvas.removeAllViews()
+        canvas.addView(hostView)
+    }
+}
+
+
+
+
