@@ -1056,6 +1056,441 @@ class WidgetsFragment : Fragment(R.layout.widget_fragment_layout) {
 
 
 
+package your.package.name
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Intent
+import android.graphics.Rect
+import android.os.Bundle
+import android.view.*
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.fragment.app.Fragment
+
+/**
+ * Fragment that owns the AppWidgetHost lifecycle and a canvas to place widgets.
+ * Layout must include:
+ *  - R.id.add_widget_button
+ *  - R.id.widgets_fragment_container (FrameLayout)
+ */
+class WidgetsFragment : Fragment(R.layout.widget_fragment_layout) {
+
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+
+    private lateinit var addWidgetBtn: View
+    private lateinit var widgetsLayoutContainer: FrameLayout
+    private lateinit var deleteZone: ImageView
+
+    private var pendingProvider: AppWidgetProviderInfo? = null
+    private var pendingWidgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+
+    private val bindWidgetLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val id = result.data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1)
+                ?: pendingWidgetId
+            val info = appWidgetManager.getAppWidgetInfo(id) ?: pendingProvider
+            if (info != null && id != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                addWidgetToSurface(info, id)
+            } else {
+                Toast.makeText(requireContext(), "Binding canceled", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(requireContext(), "Binding denied", Toast.LENGTH_SHORT).show()
+        }
+        pendingProvider = null
+        pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        appWidgetManager = AppWidgetManager.getInstance(requireContext())
+        appWidgetHost = AppWidgetHost(requireContext(), /*hostId=*/1024)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        appWidgetHost.startListening()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        appWidgetHost.stopListening()
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        addWidgetBtn = view.findViewById(R.id.add_widget_button)
+        widgetsLayoutContainer = view.findViewById(R.id.widgets_fragment_container)
+
+        // Simple bottom trash bar for drag-to-delete
+        deleteZone = ImageView(requireContext()).apply {
+            setImageResource(android.R.drawable.ic_menu_delete)
+            alpha = 0.85f
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                resources.displayMetrics.widthPixels,
+                (56 * resources.displayMetrics.density).toInt(),
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            )
+        }
+        (view as ViewGroup).addView(deleteZone)
+
+        addWidgetBtn.setOnClickListener { showWidgetPickerBottomSheet() }
+    }
+
+    private fun showWidgetPickerBottomSheet() {
+        WidgetPickerBottomSheet(
+            context = requireActivity(), // activity context is safest for providers
+            appWidgetManager = appWidgetManager,
+            appWidgetHost = appWidgetHost
+        ) { provider, widgetId ->
+            if (!ensureBindOrRequest(provider, widgetId)) return@WidgetPickerBottomSheet
+            addWidgetToSurface(provider, widgetId)
+        }.show()
+    }
+
+    /** Try silent bind; if not allowed, launch system grant UI. */
+    private fun ensureBindOrRequest(provider: AppWidgetProviderInfo, widgetId: Int): Boolean {
+        val ok = appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)
+        if (ok) return true
+
+        pendingProvider = provider
+        pendingWidgetId = widgetId
+
+        val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider.provider)
+        }
+        bindWidgetLauncher.launch(intent)
+        return false
+    }
+
+    private fun addWidgetToSurface(provider: AppWidgetProviderInfo, widgetId: Int) {
+        // Some providers won’t draw until they get options (size in dp).
+        val minWdp = maxOf(60, provider.minWidth)
+        val minHdp = maxOf(60, provider.minHeight)
+
+        val hostView: AppWidgetHostView =
+            appWidgetHost.createView(requireActivity(), widgetId, provider).apply {
+                setAppWidget(widgetId, provider)
+                updateAppWidgetSize(Bundle(), minWdp, minHdp, minWdp, minHdp)
+                layoutParams = FrameLayout.LayoutParams(
+                    dp(200f), dp(200f) // start with a 200dp square; you can implement resize later
+                )
+            }
+
+        widgetsLayoutContainer.addView(hostView)
+        hostView.setOnTouchListener(widgetTouchListener(hostView, widgetId))
+    }
+
+    // --------- optional drag + delete ---------
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun widgetTouchListener(widget: View, widgetId: Int): View.OnTouchListener {
+        var dX = 0f
+        var dY = 0f
+        var dragging = false
+
+        return View.OnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dX = widget.x - event.rawX
+                    dY = widget.y - event.rawY
+                    dragging = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    widget.x = event.rawX + dX
+                    widget.y = event.rawY + dY
+                    deleteZone.visibility = View.VISIBLE
+                    dragging = true
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    deleteZone.visibility = View.GONE
+                    if (dragging && isOverDeleteZone(widget)) {
+                        (widget.parent as? ViewGroup)?.removeView(widget)
+                        appWidgetHost.deleteAppWidgetId(widgetId)
+                        Toast.makeText(requireContext(), "Widget removed", Toast.LENGTH_SHORT).show()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun isOverDeleteZone(v: View): Boolean {
+        val trashRect = Rect()
+        deleteZone.getHitRect(trashRect)
+        val viewRect = Rect(
+            v.x.toInt(), v.y.toInt(),
+            (v.x + v.width).toInt(), (v.y + v.height).toInt()
+        )
+        return Rect.intersects(trashRect, viewRect)
+    }
+
+    private fun dp(v: Float): Int = (v * resources.displayMetrics.density).toInt()
+}
+
+
+
+
+
+
+
+
+
+package your.package.name
+
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.PackageManager
+import android.graphics.drawable.Drawable
+import android.os.Bundle
+import android.util.Log
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import kotlin.math.roundToInt
+
+/**
+ * Widget picker that shows reliable previews:
+ * - Uses correct dp/px conversion
+ * - Calls updateAppWidgetSize() so providers can render
+ * - Falls back to static preview (preview image/layout) when live preview isn't available
+ * - Protects the picked widgetId from being deleted on dismiss
+ */
+class WidgetPickerBottomSheet(
+    private val context: Context,
+    private val appWidgetManager: AppWidgetManager,
+    private val appWidgetHost: AppWidgetHost,
+    private val onWidgetSelected: (AppWidgetProviderInfo, Int) -> Unit
+) {
+    private val tag = "WidgetPickerSheet"
+
+    fun show() {
+        val sheet = BottomSheetDialog(context)
+        val rv = RecyclerView(context).apply {
+            layoutManager = GridLayoutManager(context, 2)
+            setHasFixedSize(true)
+        }
+
+        val providers: List<AppWidgetProviderInfo> = appWidgetManager.installedProviders
+
+        rv.adapter = object : RecyclerView.Adapter<VH>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                val cell = FrameLayout(parent.context).apply {
+                    // ~200dp square cells (preview content is centered inside)
+                    val size = dp(parent.context, 200f)
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        size
+                    )
+                    isClickable = true
+                    isFocusable = true
+                    foreground = parent.context.obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground)).getDrawable(0)
+                }
+                return VH(cell)
+            }
+
+            override fun onBindViewHolder(holder: VH, position: Int) {
+                holder.bind(providers[position]) { prov, id ->
+                    onWidgetSelected(prov, id)
+                    sheet.dismiss() // detach runs after this; holder protects the id
+                }
+            }
+
+            override fun getItemCount() = providers.size
+
+            override fun onViewAttachedToWindow(holder: VH) {
+                holder.attach(appWidgetHost, appWidgetManager)
+            }
+
+            override fun onViewDetachedFromWindow(holder: VH) {
+                holder.detach(appWidgetHost)
+            }
+
+            override fun onViewRecycled(holder: VH) {
+                holder.detach(appWidgetHost)
+                super.onViewRecycled(holder)
+            }
+        }
+
+        sheet.setContentView(rv)
+        sheet.show()
+    }
+
+    private inner class VH(val root: FrameLayout) : RecyclerView.ViewHolder(root) {
+        private var provider: AppWidgetProviderInfo? = null
+        private var widgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+        private var hostView: AppWidgetHostView? = null
+        private var consumedByPick = false
+
+        fun bind(
+            prov: AppWidgetProviderInfo,
+            onPick: (AppWidgetProviderInfo, Int) -> Unit
+        ) {
+            provider = prov
+            consumedByPick = false
+
+            // Title above the preview
+            root.removeAllViews()
+            val title = TextView(root.context).apply {
+                text = prov.loadLabel(root.context.packageManager)
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.START or Gravity.TOP
+                ).apply { topMargin = dp(root.context, 8f) }
+            }
+            root.addView(title)
+
+            // Placeholder; actual preview added during attach()
+            val placeholder = FrameLayout(root.context).apply {
+                val side = dp(root.context, 164f) // slightly smaller than cell
+                layoutParams = FrameLayout.LayoutParams(side, side, Gravity.CENTER).apply {
+                    topMargin = dp(root.context, 24f)
+                }
+                setBackgroundColor(0xFF333333.toInt())
+            }
+            root.addView(placeholder)
+
+            root.setOnClickListener {
+                val p = provider ?: return@setOnClickListener
+                if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+                    widgetId = appWidgetHost.allocateAppWidgetId()
+                }
+                // Attempt silent bind (no-op if already bound)
+                appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, p.provider)
+
+                consumedByPick = true
+                onPick(p, widgetId)
+            }
+        }
+
+        fun attach(host: AppWidgetHost, mgr: AppWidgetManager) {
+            val p = provider ?: return
+            val ctx = root.context
+
+            if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+                widgetId = host.allocateAppWidgetId()
+            }
+
+            root.post {
+                // Remove old preview (if any)
+                // Keep the first child (the title); remove others
+                while (root.childCount > 1) root.removeViewAt(1)
+
+                val bound = mgr.bindAppWidgetIdIfAllowed(widgetId, p.provider)
+                if (bound && p.configure == null) {
+                    // Live host view preview
+                    val hv = host.createView(ctx, widgetId, p).apply {
+                        setAppWidget(widgetId, p)
+                        // Let provider know how big we are (expects dp!)
+                        val minWdp = maxOf(60, p.minWidth)     // docs say these are in dp
+                        val minHdp = maxOf(60, p.minHeight)
+                        updateAppWidgetSize(Bundle(), minWdp, minHdp, minWdp, minHdp)
+                        layoutParams = FrameLayout.LayoutParams(
+                            dp(ctx, 164f),
+                            dp(ctx, 164f),
+                            Gravity.CENTER
+                        ).apply { topMargin = dp(ctx, 24f) }
+                    }
+                    hostView = hv
+                    root.addView(hv)
+                } else {
+                    // Static preview fallback (works for non-bound or config-required widgets)
+                    val preview = staticPreview(ctx, p)
+                    root.addView(preview)
+                }
+            }
+        }
+
+        fun detach(host: AppWidgetHost) {
+            // Remove everything except the title (index 0)
+            while (root.childCount > 1) root.removeViewAt(1)
+            hostView = null
+            if (!consumedByPick && widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                host.deleteAppWidgetId(widgetId)
+                widgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+            }
+        }
+
+        private fun staticPreview(ctx: Context, p: AppWidgetProviderInfo): ImageView {
+            val iv = ImageView(ctx).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                layoutParams = FrameLayout.LayoutParams(
+                    dp(ctx, 164f),
+                    dp(ctx, 164f),
+                    Gravity.CENTER
+                ).apply { topMargin = dp(ctx, 24f) }
+                setBackgroundColor(0xFF333333.toInt())
+            }
+
+            val d: Drawable? = try { p.loadPreviewImage(ctx, 0) } catch (e: Exception) { null }
+            if (d != null) {
+                iv.setImageDrawable(d)
+                return iv
+            }
+
+            // If provider supplies previewLayout, inflate it inside the provider Context
+            if (p.previewLayout != 0) {
+                try {
+                    val pkgCtx = ctx.createPackageContext(p.provider.packageName, 0)
+                    val inflater = LayoutInflater.from(pkgCtx)
+                    val view = inflater.inflate(p.previewLayout, null)
+                    // Render that view into the ImageView's bitmap (simple draw cache)
+                    view.measure(
+                        ViewGroup.MeasureSpec.makeMeasureSpec(dp(ctx, 164f), ViewGroup.MeasureSpec.EXACTLY),
+                        ViewGroup.MeasureSpec.makeMeasureSpec(dp(ctx, 164f), ViewGroup.MeasureSpec.EXACTLY)
+                    )
+                    view.layout(0, 0, view.measuredWidth, view.measuredHeight)
+                    view.isDrawingCacheEnabled = true
+                    val bmp = android.graphics.Bitmap.createBitmap(view.measuredWidth, view.measuredHeight, android.graphics.Bitmap.Config.ARGB_8888)
+                    val canvas = android.graphics.Canvas(bmp)
+                    view.draw(canvas)
+                    iv.setImageBitmap(bmp)
+                    return iv
+                } catch (_: PackageManager.NameNotFoundException) {
+                } catch (_: Throwable) {
+                }
+            }
+
+            // Last resort: show label already added above; keep grey box
+            return iv
+        }
+    }
+
+    private fun dp(ctx: Context, v: Float): Int =
+        (v * ctx.resources.displayMetrics.density).roundToInt()
+}
+
+
+
+
+
+
 
 
 
