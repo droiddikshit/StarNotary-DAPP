@@ -516,7 +516,160 @@ class WidgetPickerBottomSheet(
 
 
 
+package your.package.name
 
+import android.annotation.SuppressLint
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.graphics.Rect
+import android.os.Bundle
+import android.view.*
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.fragment.app.Fragment
+
+/**
+ * Fragment that owns the AppWidgetHost lifecycle and surface where a picked widget is placed.
+ * Layout must define:
+ *   - R.layout.widget_fragment_layout
+ *   - a Button (or any clickable view) with id R.id.add_widget_button
+ *   - a FrameLayout with id R.id.widgets_fragment_container (the canvas)
+ */
+class WidgetsFragment : Fragment(R.layout.widget_fragment_layout) {
+
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+
+    private lateinit var addWidgetBtn: View
+    private lateinit var widgetsLayoutContainer: FrameLayout
+    private lateinit var deleteZone: ImageView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        appWidgetManager = AppWidgetManager.getInstance(requireContext())
+        appWidgetHost = AppWidgetHost(requireContext(), /*hostId=*/1024)
+        // no startListening() here; do it in onStart()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        appWidgetHost.startListening()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        appWidgetHost.stopListening()
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        addWidgetBtn = view.findViewById(R.id.add_widget_button)
+        widgetsLayoutContainer = view.findViewById(R.id.widgets_fragment_container)
+
+        // Optional: a simple bottom "trash" area for drag-to-delete.
+        deleteZone = ImageView(requireContext()).apply {
+            setImageResource(android.R.drawable.ic_menu_delete)
+            alpha = 0.8f
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                resources.displayMetrics.widthPixels,
+                (56 * resources.displayMetrics.density).toInt(),
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            )
+        }
+        (view as ViewGroup).addView(deleteZone)
+
+        addWidgetBtn.setOnClickListener { showWidgetPickerBottomSheet() }
+    }
+
+    private fun showWidgetPickerBottomSheet() {
+        WidgetPickerBottomSheet(
+            context = requireActivity(),                 // Activity context is safer for some providers
+            appWidgetManager = appWidgetManager,
+            appWidgetHost = appWidgetHost
+        ) { provider, widgetId ->
+            // Called when user taps a cell in the sheet
+            addWidgetToSurface(provider, widgetId)
+        }.show()
+    }
+
+    private fun addWidgetToSurface(provider: AppWidgetProviderInfo, widgetId: Int) {
+        // Ensure bound (no-op if already bound)
+        if (!appWidgetManager.isBoundAppWidget(widgetId)) {
+            val ok = appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)
+            if (!ok) {
+                Toast.makeText(requireContext(), "Binding not allowed", Toast.LENGTH_SHORT).show()
+                return
+            }
+        }
+
+        val hostView: AppWidgetHostView = appWidgetHost.createView(requireActivity(), widgetId, provider).apply {
+            setAppWidget(widgetId, provider)
+            layoutParams = FrameLayout.LayoutParams(provider.minWidth, provider.minHeight)
+        }
+
+        widgetsLayoutContainer.addView(hostView)
+
+        // Optional: simple drag + delete interaction
+        hostView.setOnTouchListener(widgetTouchListener(hostView, widgetId))
+    }
+
+    // --- Simple drag + delete (optional) ---
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun widgetTouchListener(widget: View, widgetId: Int): View.OnTouchListener {
+        var dX = 0f
+        var dY = 0f
+        var dragging = false
+
+        return View.OnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dX = widget.x - event.rawX
+                    dY = widget.y - event.rawY
+                    dragging = false
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    widget.x = event.rawX + dX
+                    widget.y = event.rawY + dY
+                    deleteZone.visibility = View.VISIBLE
+                    dragging = true
+                    true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    deleteZone.visibility = View.GONE
+                    if (dragging && isOverDeleteZone(widget)) {
+                        (widget.parent as? ViewGroup)?.removeView(widget)
+                        appWidgetHost.deleteAppWidgetId(widgetId)
+                        Toast.makeText(requireContext(), "Widget removed", Toast.LENGTH_SHORT).show()
+                    }
+                    true
+                }
+
+                else -> false
+            }
+        }
+    }
+
+    private fun isOverDeleteZone(v: View): Boolean {
+        val trashRect = Rect()
+        deleteZone.getHitRect(trashRect)
+        val viewRect = Rect(
+            v.x.toInt(), v.y.toInt(),
+            (v.x + v.width).toInt(), (v.y + v.height).toInt()
+        )
+        return Rect.intersects(trashRect, viewRect)
+    }
+}
+
+/** Helper: treat non-null info as “bound”. */
+private fun AppWidgetManager.isBoundAppWidget(id: Int): Boolean = getAppWidgetInfo(id) != null
 
 
 
