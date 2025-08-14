@@ -2032,3 +2032,25 @@ class WidgetsLayout @JvmOverloads constructor(
 
 
 
+fun initWidgetsLauncher(activity: ComponentActivity) {
+    (widgetsLayout as? WidgetsLayout)?.initLauncher(activity)
+}
+
+
+fun initLauncher(activity: ComponentActivity) {
+    appWidgetManager = AppWidgetManager.getInstance(context.applicationContext)
+    appWidgetHost = AppWidgetHost(context.applicationContext, 1024)
+    appWidgetHost.startListening()
+
+    addBtn.setOnClickListener {
+        val appWidgetId = appWidgetHost.allocateAppWidgetId()
+        val pickIntent = Intent(AppWidgetManager.ACTION_APPWIDGET_PICK).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+        }
+        activity.startActivityForResult(pickIntent, REQUEST_PICK_APPWIDGET)
+    }
+}
+
+
+
+
