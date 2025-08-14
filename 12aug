@@ -1,3 +1,135 @@
+package your.package.name
+
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.util.AttributeSet
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.isVisible
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import your.package.name.databinding.LayoutWidgetsBinding
+
+class WidgetsLayout @JvmOverloads constructor(
+    context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
+) : FrameLayout(context, attrs, defStyleAttr), DefaultLifecycleObserver {
+
+    companion object {
+        private const val HOST_ID = 1024
+    }
+
+    private val vb = LayoutWidgetsBinding.inflate(LayoutInflater.from(context), this, true)
+    private val canvas: FrameLayout get() = vb.widgetsLayoutContainer
+    private val addBtn: ImageButton get() = vb.addWidgetButton
+    private val deleteZone: ImageView get() = vb.deleteZone
+
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
+
+    // pre-registered launcher (no lazy register!)
+    private lateinit var bindLauncher: ActivityResultLauncher<Intent>
+    private var pendingId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+    private var pendingProvider: AppWidgetProviderInfo? = null
+
+    /** Call this from Activity.onCreate(...) after setContentView(...) */
+    fun initLauncher(activity: ComponentActivity) {
+        // 1) tie to lifecycle (to get onStart/onStop)
+        activity.lifecycle.addObserver(this)
+
+        // 2) init host/manager once
+        appWidgetManager = AppWidgetManager.getInstance(context.applicationContext)
+        appWidgetHost = AppWidgetHost(context.applicationContext, HOST_ID)
+
+        // 3) register the launcher NOW (before STARTED)
+        bindLauncher = activity.registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { r ->
+            val id = r.data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingId)
+                ?: pendingId
+            val info = appWidgetManager.getAppWidgetInfo(id) ?: pendingProvider
+            if (r.resultCode == Activity.RESULT_OK &&
+                info != null && id != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                placeWidget(info, id)
+            } else {
+                toast("Binding canceled/denied")
+            }
+            pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+            pendingProvider = null
+        }
+
+        // 4) wire the + button
+        addBtn.isVisible = true
+        addBtn.setOnClickListener { openPicker(activity) }
+    }
+
+    // -------- lifecycle from host activity --------
+    override fun onStart(owner: LifecycleOwner) { appWidgetHost.startListening() }
+    override fun onStop(owner: LifecycleOwner) { appWidgetHost.stopListening() }
+
+    // -------- picker + binding flow --------
+    private fun openPicker(activity: Activity) {
+        WidgetPickerBottomSheet(
+            context = activity,
+            appWidgetManager = appWidgetManager,
+            appWidgetHost = appWidgetHost
+        ) { provider, widgetId ->
+            // ensure bind; if not allowed, launch system grant via pre-registered launcher
+            if (!appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)) {
+                pendingId = widgetId
+                pendingProvider = provider
+                val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider.provider)
+                }
+                bindLauncher.launch(intent)
+            } else {
+                placeWidget(provider, widgetId)
+            }
+        }.show()
+    }
+
+    private fun placeWidget(info: AppWidgetProviderInfo, id: Int) {
+        val minWdp = maxOf(60, info.minWidth)
+        val minHdp = maxOf(60, info.minHeight)
+
+        val hv: AppWidgetHostView =
+            appWidgetHost.createView(context, id, info).apply {
+                setAppWidget(id, info)
+                // force providers to draw immediately (DP values)
+                updateAppWidgetSize(Bundle(), minWdp, minHdp, minWdp, minHdp)
+                layoutParams = LayoutParams(dp(200f), dp(200f))
+            }
+
+        canvas.addView(hv)
+        addBtn.bringToFront()
+    }
+
+    // -------- utils --------
+    private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+    private fun toast(s: String) = Toast.makeText(context, s, Toast.LENGTH_SHORT).show()
+}
+
+
+
+
+
+
+
+
+
 no// file: WidgetHostController.kt
 package com.example.mynewwidget
 
