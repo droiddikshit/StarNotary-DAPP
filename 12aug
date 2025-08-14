@@ -362,3 +362,163 @@ dependencies {
     // implementation "androidx.lifecycle:lifecycle-runtime:2.8.4"
 }
 
+
+
+
+
+
+
+
+
+
+
+package your.package.name
+
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.TextView
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+
+/**
+ * BottomSheet that shows live widget previews using a RecyclerView grid.
+ * Allocation/binding happens on attach; resources are released on detach.
+ */
+class WidgetPickerBottomSheet(
+    private val context: Context,
+    private val appWidgetManager: AppWidgetManager,
+    private val appWidgetHost: AppWidgetHost,
+    private val onWidgetSelected: (AppWidgetProviderInfo, Int) -> Unit
+) {
+
+    fun show() {
+        val sheet = BottomSheetDialog(context)
+        val rv = RecyclerView(context).apply {
+            layoutManager = GridLayoutManager(context, 2)
+            setHasFixedSize(true)
+        }
+
+        val providers: List<AppWidgetProviderInfo> = appWidgetManager.installedProviders
+
+        rv.adapter = object : RecyclerView.Adapter<WidgetCellVH>() {
+
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): WidgetCellVH {
+                val cellHeightPx = (200 * parent.resources.displayMetrics.density).toInt()
+                val root = FrameLayout(parent.context).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        cellHeightPx
+                    )
+                    isClickable = true
+                }
+                return WidgetCellVH(root)
+            }
+
+            override fun onBindViewHolder(holder: WidgetCellVH, position: Int) {
+                holder.bind(providers[position], onWidgetSelected)
+            }
+
+            override fun getItemCount(): Int = providers.size
+
+            // --- lifecycle-aware binding to avoid flicker/blank states ---
+            override fun onViewAttachedToWindow(holder: WidgetCellVH) {
+                holder.attach(appWidgetHost, appWidgetManager)
+            }
+
+            override fun onViewDetachedFromWindow(holder: WidgetCellVH) {
+                holder.detach(appWidgetHost)
+            }
+
+            override fun onViewRecycled(holder: WidgetCellVH) {
+                holder.detach(appWidgetHost)
+                super.onViewRecycled(holder)
+            }
+        }
+
+        sheet.setContentView(rv)
+        sheet.show()
+    }
+
+    private class WidgetCellVH(val root: FrameLayout) : RecyclerView.ViewHolder(root) {
+        private var provider: AppWidgetProviderInfo? = null
+        private var widgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+        private var hostView: AppWidgetHostView? = null
+
+        fun bind(
+            prov: AppWidgetProviderInfo,
+            onPick: (AppWidgetProviderInfo, Int) -> Unit
+        ) {
+            provider = prov
+            root.setOnClickListener {
+                val id = if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID)
+                    AppWidgetManager.INVALID_APPWIDGET_ID else widgetId
+                // If we haven't attached yet, we’ll allocate in attach();
+                // if already attached, id is valid and we can return immediately.
+                onPick(prov, if (id != AppWidgetManager.INVALID_APPWIDGET_ID) id else widgetId)
+            }
+        }
+
+        fun attach(host: AppWidgetHost, mgr: AppWidgetManager) {
+            val p = provider ?: return
+
+            if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+                widgetId = host.allocateAppWidgetId()
+            }
+
+            val bound = mgr.bindAppWidgetIdIfAllowed(widgetId, p.provider)
+
+            root.removeAllViews()
+
+            if (bound) {
+                hostView = host.createView(root.context, widgetId, p).apply {
+                    setAppWidget(widgetId, p)
+                    layoutParams = FrameLayout.LayoutParams(p.minWidth, p.minHeight, Gravity.CENTER)
+                }
+                root.addView(hostView)
+            } else {
+                // Fallback label if user hasn’t granted bind permission (non-system builds).
+                root.addView(TextView(root.context).apply {
+                    text = p.loadLabel(root.context.packageManager)
+                    gravity = Gravity.CENTER
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                })
+            }
+        }
+
+        fun detach(host: AppWidgetHost) {
+            root.removeAllViews()
+            hostView = null
+            if (widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                host.deleteAppWidgetId(widgetId)
+                widgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
