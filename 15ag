@@ -1,3 +1,15 @@
+val pageLayout = PageLayoutFactory.get(context, page)
+addView(pageLayout)
+
+if (pageLayout is WidgetsPageLayout) {
+    val wl = pageLayout.findViewById<WidgetsLayout>(R.id.widgets_root) ?: return
+    val act = context as ComponentActivity
+    wl.setBindLauncher((this@PageContainerLayout.context as HomeModeActivity).bindWidgetLauncher, act)
+}
+
+
+
+
 
 bindWidgetLauncher = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
