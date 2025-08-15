@@ -1,5 +1,120 @@
 package com.yourpkg.homemode.ui.widget.widgets
 
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.os.Bundle
+import android.view.*
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+
+class WidgetPickerBottomSheet(
+    private val context: Activity, // MUST be Activity for widget host view
+    private val appWidgetManager: AppWidgetManager,
+    private val appWidgetHost: AppWidgetHost,
+    private val onWidgetSelected: (AppWidgetProviderInfo, Int) -> Unit
+) {
+    fun show() {
+        val dialog = BottomSheetDialog(context)
+        val rv = RecyclerView(context).apply {
+            layoutManager = GridLayoutManager(context, 2)
+        }
+
+        // Filter “square-ish” widgets, like your original code
+        val density = context.resources.displayMetrics.density
+        val maxCellDp = 210; val tolDp = 50
+        val maxPx = (maxCellDp * density).toInt()
+        val tolPx = (tolDp * density).toInt()
+
+        val providers = appWidgetManager.installedProviders.filter {
+            val w = (it.minWidth * density).toInt()
+            val h = (it.minHeight * density).toInt()
+            kotlin.math.abs(w - h) <= tolPx && w <= maxPx && h <= maxPx
+        }
+
+        if (providers.isEmpty()) {
+            Toast.makeText(context, "No square-like widgets found", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        rv.adapter = object : RecyclerView.Adapter<VH>() {
+            override fun onCreateViewHolder(p: ViewGroup, vt: Int): VH {
+                val root = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(16.dpToPx(context), 16.dpToPx(context),
+                               16.dpToPx(context), 16.dpToPx(context))
+                }
+                return VH(root)
+            }
+
+            override fun onBindViewHolder(h: VH, pos: Int) {
+                val provider = providers[pos]
+                val widgetId = appWidgetHost.allocateAppWidgetId()
+
+                val previewW = 200.dpToPx(context)
+                val previewH = 200.dpToPx(context)
+                val opts = buildWidgetOptions(context, provider, previewW, previewH)
+
+                val bound = appWidgetManager.bindAppWidgetIdIfAllowed(
+                    widgetId, provider.provider, opts
+                )
+
+                (h.itemView as LinearLayout).apply {
+                    removeAllViews()
+                    addView(TextView(context).apply {
+                        text = provider.label
+                        setPadding(0, 0, 0, 8.dpToPx(context))
+                    })
+
+                    if (bound) {
+                        val hostView = appWidgetHost.createView(context, widgetId, provider).apply {
+                            setAppWidget(widgetId, provider)
+                            updateAppWidgetSize(
+                                Bundle.EMPTY,
+                                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH),
+                                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT),
+                                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH),
+                                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT)
+                            )
+                            layoutParams = LinearLayout.LayoutParams(previewW, previewH)
+                        }
+                        addView(hostView)
+                    } else {
+                        addView(TextView(context).apply {
+                            text = "Tap to select (permission will be requested)"
+                        })
+                    }
+
+                    setOnClickListener {
+                        dialog.dismiss()
+                        onWidgetSelected(provider, widgetId)
+                    }
+                }
+            }
+
+            override fun getItemCount() = providers.size
+        }
+
+        dialog.setContentView(rv)
+        dialog.show()
+    }
+
+    private class VH(v: View) : RecyclerView.ViewHolder(v)
+}
+
+
+
+
+
+
+
+package com.yourpkg.homemode.ui.widget.widgets
+
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.appwidget.AppWidgetHost
