@@ -1,6 +1,52 @@
 package com.yourpkg.homemode.ui.widget.widgets
 
 import android.app.Activity
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.content.ContextWrapper
+import android.os.Bundle
+
+fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+fun Int.dpToPx(context: Context): Int =
+    (this * context.resources.displayMetrics.density).toInt()
+
+fun buildWidgetOptions(
+    context: Context,
+    provider: AppWidgetProviderInfo,
+    widthPx: Int,
+    heightPx: Int
+): Bundle {
+    val minW = provider.minWidth.dpToPx(context).coerceAtMost(widthPx)
+    val minH = provider.minHeight.dpToPx(context).coerceAtMost(heightPx)
+    val maxW = (provider.minResizeWidth.takeIf { it > 0 } ?: provider.minWidth)
+        .dpToPx(context).coerceAtLeast(minW)
+    val maxH = (provider.minResizeHeight.takeIf { it > 0 } ?: provider.minHeight)
+        .dpToPx(context).coerceAtLeast(minH)
+
+    return Bundle().apply {
+        putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,  minW)
+        putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, minH)
+        putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH,  maxW)
+        putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, maxH)
+    }
+}
+
+
+
+
+
+
+
+
+package com.yourpkg.homemode.ui.widget.widgets
+
+import android.app.Activity
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
