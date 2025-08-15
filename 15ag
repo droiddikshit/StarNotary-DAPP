@@ -1,362 +1,119 @@
-private fun pingInitialUpdate(provider: AppWidgetProviderInfo, widgetId: Int) {
-    val i = Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE).apply {
-        component = provider.provider
-        putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, intArrayOf(widgetId))
-        putExtras(buildWidgetOptions(
-            ctx, provider,
-            provider.minWidth.coerceAtLeast(120).dpToPx(ctx),
-            provider.minHeight.coerceAtLeast(120).dpToPx(ctx)
-        ))
-    }
-    ctx.sendBroadcast(i)
-}
-
-if (!isOverlappingAny(container)) {
-    widgetsLayoutContainer.addView(container)
-    // Nudge Samsung providers to render the first RemoteViews:
-    pingInitialUpdate(provider, widgetId)
-} else {
-    Toast.makeText(ctx, "Can't place: Overlapping", Toast.LENGTH_SHORT).show()
-}
-
-
-
-
-
-
-
-
-
-
-
-package com.yourpkg.homemode.ui.widget.widgets
-
-import android.app.Activity
-import android.appwidget.AppWidgetManager
-import android.appwidget.AppWidgetProviderInfo
-import android.content.Context
-import android.content.ContextWrapper
-import android.os.Bundle
-
-fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
-}
-
-fun Int.dpToPx(context: Context): Int =
-    (this * context.resources.displayMetrics.density).toInt()
-
-fun buildWidgetOptions(
-    context: Context,
-    provider: AppWidgetProviderInfo,
-    widthPx: Int,
-    heightPx: Int
-): Bundle {
-    val minW = provider.minWidth.dpToPx(context).coerceAtMost(widthPx)
-    val minH = provider.minHeight.dpToPx(context).coerceAtMost(heightPx)
-    val maxW = (provider.minResizeWidth.takeIf { it > 0 } ?: provider.minWidth)
-        .dpToPx(context).coerceAtLeast(minW)
-    val maxH = (provider.minResizeHeight.takeIf { it > 0 } ?: provider.minHeight)
-        .dpToPx(context).coerceAtLeast(minH)
-
-    return Bundle().apply {
-        putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,  minW)
-        putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, minH)
-        putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH,  maxW)
-        putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, maxH)
-    }
-}
-
-
-
-
-
-
-
-
-package com.yourpkg.homemode.ui.widget.widgets
+package your.package.name
 
 import android.app.Activity
 import android.appwidget.AppWidgetHost
-import android.appwidget.AppWidgetManager
-import android.appwidget.AppWidgetProviderInfo
-import android.os.Bundle
-import android.view.*
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.Toast
-import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.bottomsheet.BottomSheetDialog
-
-class WidgetPickerBottomSheet(
-    private val context: Activity, // MUST be Activity for widget host view
-    private val appWidgetManager: AppWidgetManager,
-    private val appWidgetHost: AppWidgetHost,
-    private val onWidgetSelected: (AppWidgetProviderInfo, Int) -> Unit
-) {
-    fun show() {
-        val dialog = BottomSheetDialog(context)
-        val rv = RecyclerView(context).apply {
-            layoutManager = GridLayoutManager(context, 2)
-        }
-
-        // Filter “square-ish” widgets, like your original code
-        val density = context.resources.displayMetrics.density
-        val maxCellDp = 210; val tolDp = 50
-        val maxPx = (maxCellDp * density).toInt()
-        val tolPx = (tolDp * density).toInt()
-
-        val providers = appWidgetManager.installedProviders.filter {
-            val w = (it.minWidth * density).toInt()
-            val h = (it.minHeight * density).toInt()
-            kotlin.math.abs(w - h) <= tolPx && w <= maxPx && h <= maxPx
-        }
-
-        if (providers.isEmpty()) {
-            Toast.makeText(context, "No square-like widgets found", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        rv.adapter = object : RecyclerView.Adapter<VH>() {
-            override fun onCreateViewHolder(p: ViewGroup, vt: Int): VH {
-                val root = LinearLayout(context).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(16.dpToPx(context), 16.dpToPx(context),
-                               16.dpToPx(context), 16.dpToPx(context))
-                }
-                return VH(root)
-            }
-
-            override fun onBindViewHolder(h: VH, pos: Int) {
-                val provider = providers[pos]
-                val widgetId = appWidgetHost.allocateAppWidgetId()
-
-                val previewW = 200.dpToPx(context)
-                val previewH = 200.dpToPx(context)
-                val opts = buildWidgetOptions(context, provider, previewW, previewH)
-
-                val bound = appWidgetManager.bindAppWidgetIdIfAllowed(
-                    widgetId, provider.provider, opts
-                )
-
-                (h.itemView as LinearLayout).apply {
-                    removeAllViews()
-                    addView(TextView(context).apply {
-                        text = provider.label
-                        setPadding(0, 0, 0, 8.dpToPx(context))
-                    })
-
-                    if (bound) {
-                        val hostView = appWidgetHost.createView(context, widgetId, provider).apply {
-                            setAppWidget(widgetId, provider)
-                            updateAppWidgetSize(
-                                Bundle.EMPTY,
-                                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH),
-                                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT),
-                                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH),
-                                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT)
-                            )
-                            layoutParams = LinearLayout.LayoutParams(previewW, previewH)
-                        }
-                        addView(hostView)
-                    } else {
-                        addView(TextView(context).apply {
-                            text = "Tap to select (permission will be requested)"
-                        })
-                    }
-
-                    setOnClickListener {
-                        dialog.dismiss()
-                        onWidgetSelected(provider, widgetId)
-                    }
-                }
-            }
-
-            override fun getItemCount() = providers.size
-        }
-
-        dialog.setContentView(rv)
-        dialog.show()
-    }
-
-    private class VH(v: View) : RecyclerView.ViewHolder(v)
-}
-
-
-
-
-
-
-
-package com.yourpkg.homemode.ui.widget.widgets
-
-import android.annotation.SuppressLint
-import android.app.Activity
-import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Context
-import android.graphics.Rect
+import android.content.Intent
 import android.os.Bundle
 import android.util.AttributeSet
-import android.view.*
-import android.widget.*
-import androidx.core.view.children
-import com.yourpkg.R
+import android.view.LayoutInflater
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import your.package.name.databinding.LayoutWidgetsBinding
+import kotlin.math.max
 
 class WidgetsLayout @JvmOverloads constructor(
-    private val ctx: Context,
-    attrs: AttributeSet? = null
-) : FrameLayout(ctx, attrs) {
+    context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
+) : FrameLayout(context, attrs, defStyleAttr), DefaultLifecycleObserver {
 
-    private lateinit var widgetsLayoutContainer: FrameLayout
-    private lateinit var addWidgetBtn: Button
-    private lateinit var deleteZone: ImageView
+    companion object { private const val HOST_ID = 1024 }
 
-    private val appWidgetManager = AppWidgetManager.getInstance(ctx)
-    private val appWidgetHost   = AppWidgetHost(ctx, HOST_ID)
+    private val vb = LayoutWidgetsBinding.inflate(LayoutInflater.from(context), this, true)
 
-    init {
-        inflate(ctx, R.layout.layout_widgets, this)
-        widgetsLayoutContainer = findViewById(R.id.widgets_layout_container)
-        addWidgetBtn           = findViewById(R.id.add_widget_button)
+    private val canvas: FrameLayout  get() = vb.widgetsLayoutContainer
+    private val addBtn: ImageButton  get() = vb.addWidgetButton
+    private val deleteZone: ImageView get() = vb.deleteZone
 
-        addWidgetBtn.setOnClickListener { showWidgetPickerBottomSheet() }
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: AppWidgetHost
 
-        deleteZone = ImageView(ctx).apply {
-            setImageResource(android.R.drawable.ic_menu_delete)
-            layoutParams = LayoutParams(400, 200, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-            visibility = View.GONE
-            alpha = 0.85f
-        }
-        addView(deleteZone)
+    // provided by Activity (no register here!)
+    private var bindLauncher: ActivityResultLauncher<Intent>? = null
+    private var hostActivity: Activity? = null
+
+    private var pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+    private var pendingProvider: AppWidgetProviderInfo? = null
+
+    /** Called by container when this page view is actually attached. */
+    fun attachToLifecycle(owner: LifecycleOwner) {
+        owner.lifecycle.addObserver(this)
+        appWidgetManager = AppWidgetManager.getInstance(context.applicationContext)
+        appWidgetHost = AppWidgetHost(context.applicationContext, HOST_ID)
     }
 
-    // ---- AppWidgetHost lifecycle: handle both attach and visibility ----
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        appWidgetHost.startListening()
+    /** Called by container once (uses the pre-registered launcher from Activity). */
+    fun setBindLauncher(launcher: ActivityResultLauncher<Intent>, activity: Activity) {
+        bindLauncher = launcher
+        hostActivity = activity
+        addBtn.setOnClickListener { openPicker() }
     }
 
-    override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
-        appWidgetHost.stopListening()
-    }
+    // Lifecycle from Activity/Fragment
+    override fun onStart(owner: LifecycleOwner) { appWidgetHost.startListening() }
+    override fun onStop(owner: LifecycleOwner)  { appWidgetHost.stopListening()  }
 
-    override fun onWindowVisibilityChanged(visibility: Int) {
-        super.onWindowVisibilityChanged(visibility)
-        if (visibility == VISIBLE) appWidgetHost.startListening() else appWidgetHost.stopListening()
-    }
-
-    // ---- Picker ----
-    private fun showWidgetPickerBottomSheet() {
-        val act = ctx.findActivity() ?: error("Activity context required")
+    private fun openPicker() {
+        val act = hostActivity ?: return
         WidgetPickerBottomSheet(
             context = act,
             appWidgetManager = appWidgetManager,
             appWidgetHost = appWidgetHost
         ) { provider, widgetId ->
-            addWidgetToCanvas(provider, widgetId)
+            // silent bind first
+            if (!appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)) {
+                pendingWidgetId = widgetId
+                pendingProvider = provider
+                val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider.provider)
+                }
+                bindLauncher?.launch(intent) // uses Activity's launcher registered in onCreate()
+            } else {
+                placeWidget(provider, widgetId)
+            }
         }.show()
     }
 
-    // ---- Place a widget on our canvas ----
-    private fun addWidgetToCanvas(provider: AppWidgetProviderInfo, widgetId: Int) {
-        val widthPx  = provider.minWidth.coerceAtLeast(120).dpToPx(ctx)
-        val heightPx = provider.minHeight.coerceAtLeast(120).dpToPx(ctx)
-        val opts = buildWidgetOptions(ctx, provider, widthPx, heightPx)
-
-        // Set options BEFORE first render
-        appWidgetManager.updateAppWidgetOptions(widgetId, opts)
-
-        val hostView = appWidgetHost.createView(ctx, widgetId, provider).apply {
-            setAppWidget(widgetId, provider)
-            updateAppWidgetSize(
-                Bundle.EMPTY,
-                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH),
-                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT),
-                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH),
-                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT),
-            )
-            layoutParams = LayoutParams(widthPx, heightPx)
-        }
-
-        val container = FrameLayout(ctx).apply {
-            layoutParams = LayoutParams(widthPx, heightPx)
-            x = 400f; y = 150f
-            addView(hostView)
-            setOnTouchListener(widgetTouchListener(this, widgetId, provider))
-        }
-
-        if (!isOverlappingAny(container)) {
-            widgetsLayoutContainer.addView(container)
+    /** Forwarded from Activity’s launcher callback. */
+    fun onBindActivityResult(resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK) { clearPending(); return }
+        val id = data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingWidgetId)
+            ?: pendingWidgetId
+        val info = appWidgetManager.getAppWidgetInfo(id) ?: pendingProvider
+        if (info != null && id != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            placeWidget(info, id)
         } else {
-            Toast.makeText(ctx, "Can't place: Overlapping", Toast.LENGTH_SHORT).show()
+            toast("Bind result invalid")
         }
+        clearPending()
     }
 
-    // ---- Drag / delete / overlap helpers (keep as you had, cleaned a bit) ----
+    private fun clearPending() {
+        pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+        pendingProvider = null
+    }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun widgetTouchListener(
-        widget: View,
-        widgetId: Int,
-        provider: AppWidgetProviderInfo
-    ): OnTouchListener {
-        var dX = 0f; var dY = 0f; var dragging = false
-        return OnTouchListener { _, ev ->
-            when (ev.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    dX = widget.x - ev.rawX
-                    dY = widget.y - ev.rawY
-                    dragging = false
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    widget.x = ev.rawX + dX
-                    widget.y = ev.rawY + dY
-                    deleteZone.visibility = View.VISIBLE
-                    dragging = true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    deleteZone.visibility = View.GONE
-                    if (dragging && isOverDeleteZone(widget)) {
-                        (widget.parent as? ViewGroup)?.removeView(widget)
-                        appWidgetHost.deleteAppWidgetId(widgetId)
-                        Toast.makeText(ctx, "Widget Removed", Toast.LENGTH_SHORT).show()
-                    } else if (isOverlappingAny(widget)) {
-                        Toast.makeText(ctx, "❌ Overlaps with existing", Toast.LENGTH_SHORT).show()
-                        widget.x = 100f; widget.y = 100f
-                    }
-                }
-            }
-            true
+    private fun placeWidget(info: AppWidgetProviderInfo, id: Int) {
+        val minWdp = max(60, info.minWidth)    // values are in DP
+        val minHdp = max(60, info.minHeight)
+
+        val hv: AppWidgetHostView = appWidgetHost.createView(context, id, info).apply {
+            setAppWidget(id, info)
+            updateAppWidgetSize(Bundle(), minWdp, minHdp, minWdp, minHdp)
+            layoutParams = LayoutParams(dp(200f), dp(200f))
         }
+        canvas.addView(hv)
+        addBtn.bringToFront()
     }
 
-    private fun isOverDeleteZone(view: View): Boolean {
-        val loc = IntArray(2)
-        deleteZone.getLocationOnScreen(loc)
-        val zx = loc[0]; val zy = loc[1]
-        val cx = (view.x + view.width / 2f).toInt()
-        val cy = (view.y + view.height / 2f).toInt()
-        return cx in zx..(zx + deleteZone.width) && cy in zy..(zy + deleteZone.height)
-    }
-
-    private fun isOverlappingAny(view: View): Boolean {
-        widgetsLayoutContainer.children.forEach { child ->
-            if (child === view) return@forEach
-            val a = Rect(view.x.toInt(), view.y.toInt(),
-                view.x.toInt() + view.width, view.y.toInt() + view.height)
-            val b = Rect(child.x.toInt(), child.y.toInt(),
-                child.x.toInt() + child.width, child.y.toInt() + child.height)
-            if (Rect.intersects(a, b)) return true
-        }
-        return false
-    }
-
-    companion object {
-        private const val HOST_ID = 1024
-    }
+    private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+    private fun toast(s: String) = Toast.makeText(context, s, Toast.LENGTH_SHORT).show()
 }
