@@ -1,3 +1,34 @@
+private fun pingInitialUpdate(provider: AppWidgetProviderInfo, widgetId: Int) {
+    val i = Intent(AppWidgetManager.ACTION_APPWIDGET_UPDATE).apply {
+        component = provider.provider
+        putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, intArrayOf(widgetId))
+        putExtras(buildWidgetOptions(
+            ctx, provider,
+            provider.minWidth.coerceAtLeast(120).dpToPx(ctx),
+            provider.minHeight.coerceAtLeast(120).dpToPx(ctx)
+        ))
+    }
+    ctx.sendBroadcast(i)
+}
+
+if (!isOverlappingAny(container)) {
+    widgetsLayoutContainer.addView(container)
+    // Nudge Samsung providers to render the first RemoteViews:
+    pingInitialUpdate(provider, widgetId)
+} else {
+    Toast.makeText(ctx, "Can't place: Overlapping", Toast.LENGTH_SHORT).show()
+}
+
+
+
+
+
+
+
+
+
+
+
 package com.yourpkg.homemode.ui.widget.widgets
 
 import android.app.Activity
