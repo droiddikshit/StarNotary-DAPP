@@ -1,5 +1,181 @@
 package your.package.name
 
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
+import android.os.Build
+import android.os.Bundle
+import android.view.Gravity
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import kotlin.math.roundToInt
+
+class WidgetPickerBottomSheet(
+    private val context: Context,
+    private val appWidgetManager: AppWidgetManager,
+    private val appWidgetHost: AppWidgetHost,
+    private val onWidgetSelected: (AppWidgetProviderInfo, Int) -> Unit
+) {
+    fun show() {
+        val sheet = BottomSheetDialog(context)
+        val rv = RecyclerView(context).apply {
+            layoutManager = GridLayoutManager(context, 2)
+            setHasFixedSize(true)
+        }
+        val providers = appWidgetManager.installedProviders
+
+        rv.adapter = object : RecyclerView.Adapter<VH>() {
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                val root = FrameLayout(parent.context).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(parent.context, 200f)
+                    )
+                    isClickable = true; isFocusable = true
+                }
+                return VH(root)
+            }
+            override fun onBindViewHolder(h: VH, pos: Int) {
+                h.bind(providers[pos]) { p, id -> onWidgetSelected(p, id); sheet.dismiss() }
+            }
+            override fun getItemCount() = providers.size
+            override fun onViewAttachedToWindow(h: VH) = h.attach(appWidgetHost, appWidgetManager)
+            override fun onViewDetachedFromWindow(h: VH) = h.detach(appWidgetHost)
+            override fun onViewRecycled(h: VH) { h.detach(appWidgetHost); super.onViewRecycled(h) }
+        }
+
+        sheet.setContentView(rv)
+        sheet.show()
+    }
+
+    private inner class VH(val root: FrameLayout) : RecyclerView.ViewHolder(root) {
+        private var provider: AppWidgetProviderInfo? = null
+        private var widgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
+        private var consumedByPick = false
+
+        fun bind(p: AppWidgetProviderInfo, onPick: (AppWidgetProviderInfo, Int) -> Unit) {
+            provider = p; consumedByPick = false; root.removeAllViews()
+
+            root.addView(TextView(root.context).apply {
+                text = p.loadLabel(root.context.packageManager)
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.START or Gravity.TOP
+                ).apply { topMargin = dp(root.context, 8f) }
+            })
+
+            root.addView(FrameLayout(root.context).apply {
+                val side = dp(root.context, 164f)
+                layoutParams = FrameLayout.LayoutParams(side, side, Gravity.CENTER).apply {
+                    topMargin = dp(root.context, 24f)
+                }
+                setBackgroundColor(0xFF333333.toInt())
+            })
+
+            root.setOnClickListener {
+                val prov = provider ?: return@setOnClickListener
+                if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+                    widgetId = appWidgetHost.allocateAppWidgetId()
+                }
+                appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, prov.provider) // try silently
+                consumedByPick = true
+                onPick(prov, widgetId)
+            }
+        }
+
+        fun attach(host: AppWidgetHost, mgr: AppWidgetManager) {
+            val p = provider ?: return
+            if (widgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+                widgetId = host.allocateAppWidgetId()
+            }
+            root.post {
+                while (root.childCount > 1) root.removeViewAt(1)
+                val bound = mgr.bindAppWidgetIdIfAllowed(widgetId, p.provider)
+                if (bound && p.configure == null) {
+                    val hv = host.createView(root.context, widgetId, p).apply {
+                        setAppWidget(widgetId, p)
+                        val wdp = maxOf(60, p.minWidth)
+                        val hdp = maxOf(60, p.minHeight)
+                        updateAppWidgetSize(Bundle(), wdp, hdp, wdp, hdp)
+                        layoutParams = FrameLayout.LayoutParams(
+                            dp(root.context, 164f), dp(root.context, 164f), Gravity.CENTER
+                        ).apply { topMargin = dp(root.context, 24f) }
+                    }
+                    root.addView(hv)
+                } else {
+                    root.addView(staticPreview(root.context, p))
+                }
+            }
+        }
+
+        fun detach(host: AppWidgetHost) {
+            while (root.childCount > 1) root.removeViewAt(1)
+            if (!consumedByPick && widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                host.deleteAppWidgetId(widgetId)
+                widgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+            }
+        }
+
+        private fun staticPreview(ctx: Context, p: AppWidgetProviderInfo): ImageView {
+            val iv = ImageView(ctx).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                layoutParams = FrameLayout.LayoutParams(
+                    dp(ctx, 164f), dp(ctx, 164f), Gravity.CENTER
+                ).apply { topMargin = dp(ctx, 24f) }
+                setBackgroundColor(0xFF333333.toInt())
+            }
+            val d: Drawable? = try { p.loadPreviewImage(ctx, 0) } catch (_: Throwable) { null }
+            if (d != null) { iv.setImageDrawable(d); return iv }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val layoutId = p.previewLayout
+                if (layoutId != 0) {
+                    try {
+                        val pkgCtx = ctx.createPackageContext(p.provider.packageName, 0)
+                        val v = LayoutInflater.from(pkgCtx).inflate(layoutId, null)
+                        val s = dp(ctx, 164f)
+                        v.measure(
+                            View.MeasureSpec.makeMeasureSpec(s, View.MeasureSpec.EXACTLY),
+                            View.MeasureSpec.makeMeasureSpec(s, View.MeasureSpec.EXACTLY)
+                        )
+                        v.layout(0, 0, s, s)
+                        val bmp = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
+                        val c = Canvas(bmp); v.draw(c)
+                        iv.setImageBitmap(bmp); return iv
+                    } catch (_: PackageManager.NameNotFoundException) {}
+                    catch (_: Throwable) {}
+                }
+            }
+            return iv
+        }
+    }
+
+    private fun dp(ctx: Context, v: Float) = (v * ctx.resources.displayMetrics.density).roundToInt()
+}
+
+
+
+
+
+
+
+
+
+package your.package.name
+
 import android.app.Activity
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetHostView
