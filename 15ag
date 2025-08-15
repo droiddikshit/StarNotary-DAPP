@@ -1,0 +1,170 @@
+package com.yourpkg.homemode.ui.widget.widgets
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.graphics.Rect
+import android.os.Bundle
+import android.util.AttributeSet
+import android.view.*
+import android.widget.*
+import androidx.core.view.children
+import com.yourpkg.R
+
+class WidgetsLayout @JvmOverloads constructor(
+    private val ctx: Context,
+    attrs: AttributeSet? = null
+) : FrameLayout(ctx, attrs) {
+
+    private lateinit var widgetsLayoutContainer: FrameLayout
+    private lateinit var addWidgetBtn: Button
+    private lateinit var deleteZone: ImageView
+
+    private val appWidgetManager = AppWidgetManager.getInstance(ctx)
+    private val appWidgetHost   = AppWidgetHost(ctx, HOST_ID)
+
+    init {
+        inflate(ctx, R.layout.layout_widgets, this)
+        widgetsLayoutContainer = findViewById(R.id.widgets_layout_container)
+        addWidgetBtn           = findViewById(R.id.add_widget_button)
+
+        addWidgetBtn.setOnClickListener { showWidgetPickerBottomSheet() }
+
+        deleteZone = ImageView(ctx).apply {
+            setImageResource(android.R.drawable.ic_menu_delete)
+            layoutParams = LayoutParams(400, 200, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            visibility = View.GONE
+            alpha = 0.85f
+        }
+        addView(deleteZone)
+    }
+
+    // ---- AppWidgetHost lifecycle: handle both attach and visibility ----
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        appWidgetHost.startListening()
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        appWidgetHost.stopListening()
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(visibility)
+        if (visibility == VISIBLE) appWidgetHost.startListening() else appWidgetHost.stopListening()
+    }
+
+    // ---- Picker ----
+    private fun showWidgetPickerBottomSheet() {
+        val act = ctx.findActivity() ?: error("Activity context required")
+        WidgetPickerBottomSheet(
+            context = act,
+            appWidgetManager = appWidgetManager,
+            appWidgetHost = appWidgetHost
+        ) { provider, widgetId ->
+            addWidgetToCanvas(provider, widgetId)
+        }.show()
+    }
+
+    // ---- Place a widget on our canvas ----
+    private fun addWidgetToCanvas(provider: AppWidgetProviderInfo, widgetId: Int) {
+        val widthPx  = provider.minWidth.coerceAtLeast(120).dpToPx(ctx)
+        val heightPx = provider.minHeight.coerceAtLeast(120).dpToPx(ctx)
+        val opts = buildWidgetOptions(ctx, provider, widthPx, heightPx)
+
+        // Set options BEFORE first render
+        appWidgetManager.updateAppWidgetOptions(widgetId, opts)
+
+        val hostView = appWidgetHost.createView(ctx, widgetId, provider).apply {
+            setAppWidget(widgetId, provider)
+            updateAppWidgetSize(
+                Bundle.EMPTY,
+                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH),
+                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT),
+                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH),
+                opts.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT),
+            )
+            layoutParams = LayoutParams(widthPx, heightPx)
+        }
+
+        val container = FrameLayout(ctx).apply {
+            layoutParams = LayoutParams(widthPx, heightPx)
+            x = 400f; y = 150f
+            addView(hostView)
+            setOnTouchListener(widgetTouchListener(this, widgetId, provider))
+        }
+
+        if (!isOverlappingAny(container)) {
+            widgetsLayoutContainer.addView(container)
+        } else {
+            Toast.makeText(ctx, "Can't place: Overlapping", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ---- Drag / delete / overlap helpers (keep as you had, cleaned a bit) ----
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun widgetTouchListener(
+        widget: View,
+        widgetId: Int,
+        provider: AppWidgetProviderInfo
+    ): OnTouchListener {
+        var dX = 0f; var dY = 0f; var dragging = false
+        return OnTouchListener { _, ev ->
+            when (ev.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dX = widget.x - ev.rawX
+                    dY = widget.y - ev.rawY
+                    dragging = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    widget.x = ev.rawX + dX
+                    widget.y = ev.rawY + dY
+                    deleteZone.visibility = View.VISIBLE
+                    dragging = true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    deleteZone.visibility = View.GONE
+                    if (dragging && isOverDeleteZone(widget)) {
+                        (widget.parent as? ViewGroup)?.removeView(widget)
+                        appWidgetHost.deleteAppWidgetId(widgetId)
+                        Toast.makeText(ctx, "Widget Removed", Toast.LENGTH_SHORT).show()
+                    } else if (isOverlappingAny(widget)) {
+                        Toast.makeText(ctx, "❌ Overlaps with existing", Toast.LENGTH_SHORT).show()
+                        widget.x = 100f; widget.y = 100f
+                    }
+                }
+            }
+            true
+        }
+    }
+
+    private fun isOverDeleteZone(view: View): Boolean {
+        val loc = IntArray(2)
+        deleteZone.getLocationOnScreen(loc)
+        val zx = loc[0]; val zy = loc[1]
+        val cx = (view.x + view.width / 2f).toInt()
+        val cy = (view.y + view.height / 2f).toInt()
+        return cx in zx..(zx + deleteZone.width) && cy in zy..(zy + deleteZone.height)
+    }
+
+    private fun isOverlappingAny(view: View): Boolean {
+        widgetsLayoutContainer.children.forEach { child ->
+            if (child === view) return@forEach
+            val a = Rect(view.x.toInt(), view.y.toInt(),
+                view.x.toInt() + view.width, view.y.toInt() + view.height)
+            val b = Rect(child.x.toInt(), child.y.toInt(),
+                child.x.toInt() + child.width, child.y.toInt() + child.height)
+            if (Rect.intersects(a, b)) return true
+        }
+        return false
+    }
+
+    companion object {
+        private const val HOST_ID = 1024
+    }
+}
