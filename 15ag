@@ -1,3 +1,17 @@
+
+bindWidgetLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            // forward to the WidgetsLayout that’s currently attached (if present)
+            findViewById<WidgetsLayout?>(R.id.widgets_root)
+                ?.onBindActivityResult(result.resultCode, result.data)
+
+
+
+
+
+
+
 package your.package.name
 
 import android.app.Activity
