@@ -1,5 +1,120 @@
 package your.package.name
 
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import android.util.AttributeSet
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import your.package.name.databinding.LayoutWidgetsBinding
+import kotlin.math.max
+
+class WidgetsLayout @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : FrameLayout(context, attrs, defStyleAttr) {
+
+    companion object { private const val HOST_ID = 1024 }
+
+    private val vb = LayoutWidgetsBinding.inflate(LayoutInflater.from(context), this, true)
+
+    private val canvas: FrameLayout  get() = vb.widgetsLayoutContainer
+    private val addBtn: ImageButton  get() = vb.addWidgetButton
+    private val deleteZone: ImageView get() = vb.deleteZone
+
+    // Initialize once in constructor -> no lateinit race
+    private val appWidgetManager: AppWidgetManager =
+        AppWidgetManager.getInstance(context.applicationContext)
+    private val appWidgetHost: AppWidgetHost =
+        AppWidgetHost(context.applicationContext, HOST_ID)
+
+    // Provided by Activity (registered in Activity.onCreate)
+    private var bindLauncher: ActivityResultLauncher<Intent>? = null
+    private var hostActivity: Activity? = null
+
+    // ---- Activity wires this once ----
+    fun setBindLauncher(launcher: ActivityResultLauncher<Intent>, activity: Activity) {
+        bindLauncher = launcher
+        hostActivity = activity
+        addBtn.setOnClickListener { openPicker() }
+    }
+
+    // ---- Let the View control listening via attach/detach (no lifecycle observer) ----
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        appWidgetHost.startListening()
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        appWidgetHost.stopListening()
+    }
+
+    // ---- Picker & placement ----
+    private fun openPicker() {
+        val act = hostActivity ?: return
+        WidgetPickerBottomSheet(
+            context = act,
+            appWidgetManager = appWidgetManager,
+            appWidgetHost = appWidgetHost
+        ) { provider, widgetId ->
+            // try silent bind; else request permission using Activity’s pre-registered launcher
+            if (!appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)) {
+                val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider.provider)
+                }
+                bindLauncher?.launch(intent)
+            } else {
+                placeWidget(provider, widgetId)
+            }
+        }.show()
+    }
+
+    /** Call this from your ActivityResult callback. */
+    fun onBindActivityResult(resultCode: Int, data: Intent?) {
+        if (resultCode != Activity.RESULT_OK || data == null) return
+        val id = data.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, AppWidgetManager.INVALID_APPWIDGET_ID)
+        if (id == AppWidgetManager.INVALID_APPWIDGET_ID) return
+        val info = appWidgetManager.getAppWidgetInfo(id) ?: return
+        placeWidget(info, id)
+    }
+
+    private fun placeWidget(info: AppWidgetProviderInfo, id: Int) {
+        val minWdp = max(60, info.minWidth)   // DP (AppWidgetProviderInfo uses dp)
+        val minHdp = max(60, info.minHeight)
+
+        val hv: AppWidgetHostView = appWidgetHost.createView(context, id, info).apply {
+            setAppWidget(id, info)
+            updateAppWidgetSize(Bundle(), minWdp, minHdp, minWdp, minHdp)
+            layoutParams = LayoutParams(dp(200f), dp(200f))
+        }
+        canvas.addView(hv)
+        addBtn.bringToFront()
+    }
+
+    private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+    private fun toast(s: String) = Toast.makeText(context, s, Toast.LENGTH_SHORT).show()
+}
+
+
+
+
+
+
+package your.package.name
+
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetManager
