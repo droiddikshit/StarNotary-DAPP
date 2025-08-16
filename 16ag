@@ -1,4 +1,523 @@
+package your.pkg.widgets
 
+object WidgetContract {
+    const val EXTRA_APPWIDGET_ID = "extra_appwidget_id"
+    const val EXTRA_PROVIDER = "extra_provider" // ComponentName.flattenToString()
+    const val HOST_ID = 1024                    // single host id for the whole app
+}
+
+
+
+package your.pkg.widgets
+
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.view.ContextThemeWrapper
+
+/**
+ * Single host/manager per process. Forces a framework theme so RemoteViews
+ * inflate framework widgets (avoids AppCompat* crashes).
+ */
+object WidgetHostSingleton {
+    @Volatile private var host: AppWidgetHost? = null
+    @Volatile private var mgr: AppWidgetManager? = null
+
+    fun host(appCtx: Context): AppWidgetHost =
+        (host ?: object : AppWidgetHost(appCtx.applicationContext, WidgetContract.HOST_ID) {
+            override fun onCreateView(
+                context: Context, appWidgetId: Int, appWidget: AppWidgetProviderInfo
+            ): AppWidgetHostView {
+                val native = ContextThemeWrapper(
+                    context.applicationContext, android.R.style.Theme_DeviceDefault
+                )
+                return AppWidgetHostView(native)
+            }
+        }).also { host = it }
+
+    fun mgr(appCtx: Context): AppWidgetManager =
+        (mgr ?: AppWidgetManager.getInstance(appCtx.applicationContext)).also { mgr = it }
+
+    fun start(appCtx: Context) { host(appCtx).startListening() }
+    fun stop() { host?.stopListening() }
+}
+
+
+
+
+
+
+package your.pkg.widgets
+
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.content.Intent
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import kotlin.math.abs
+
+class WidgetPickerBottomSheet(
+    private val context: Context,
+    private val appWidgetManager: AppWidgetManager,
+    private val appWidgetHost: AppWidgetHost,
+    private val onWidgetSelected: (provider: AppWidgetProviderInfo, previewId: Int) -> Unit
+) {
+    private var sheet: BottomSheetDialog? = null
+
+    fun show() {
+        val d = context.resources.displayMetrics.density
+        val maxPx = (210 * d).toInt()
+        val tolPx = (50 * d).toInt()
+
+        val providers = appWidgetManager.installedProviders.filter { info ->
+            val w = (info.minWidth * d).toInt()
+            val h = (info.minHeight * d).toInt()
+            abs(w - h) <= tolPx && w <= maxPx && h <= maxPx
+        }
+
+        if (providers.isEmpty()) {
+            Toast.makeText(context, "No square-like widgets found", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val rv = RecyclerView(context).apply {
+            layoutManager = GridLayoutManager(context, 2)
+        }
+
+        rv.adapter = object : RecyclerView.Adapter<VH>() {
+            override fun getItemCount() = providers.size
+
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                val row = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(16,16,16,16)
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                return VH(row)
+            }
+
+            override fun onBindViewHolder(h: VH, pos: Int) {
+                val provider = providers[pos]
+
+                // Allocate id for PREVIEW and (ideally) bind so OEMs render it
+                val previewId = appWidgetHost.allocateAppWidgetId()
+                h.previewId = previewId
+
+                if (!appWidgetManager.bindAppWidgetIdIfAllowed(previewId, provider.provider)) {
+                    (context as? Activity)?.startActivityForResult(
+                        Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, previewId)
+                            putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider.provider)
+                        },
+                        9999
+                    )
+                }
+
+                val preview: AppWidgetHostView? = try {
+                    appWidgetHost.createView(context, previewId, provider).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            provider.minWidth.coerceAtLeast(400),
+                            provider.minHeight.coerceAtLeast(400)
+                        )
+                        setAppWidget(previewId, provider)
+                    }
+                } catch (_: Throwable) { null }
+
+                h.bind(provider.label ?: provider.provider.className, preview) {
+                    sheet?.dismiss()
+                    onWidgetSelected(provider, previewId)
+                }
+            }
+
+            override fun onViewRecycled(h: VH) {
+                h.previewId?.let { appWidgetHost.deleteAppWidgetId(it) } // delete previews only
+                h.previewId = null
+            }
+        }
+
+        sheet = BottomSheetDialog(context).apply {
+            setContentView(rv)
+            setOnDismissListener { sheet = null }
+            show()
+        }
+    }
+
+    class VH(val root: LinearLayout) : RecyclerView.ViewHolder(root) {
+        var previewId: Int? = null
+        fun bind(label: CharSequence, hv: AppWidgetHostView?, onClick: () -> Unit) {
+            root.removeAllViews()
+            root.addView(TextView(root.context).apply { text = label; setPadding(0,0,0,8) })
+            hv?.let { root.addView(it) }
+            root.setOnClickListener { onClick() }
+        }
+    }
+}
+
+
+
+
+
+package your.pkg.widgets
+
+import android.app.Activity
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Intent
+import android.os.Bundle
+import android.view.Gravity
+import android.view.ViewTreeObserver
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.TextView
+import android.widget.Toast
+
+class WidgetPickerActivity : Activity() {
+
+    private lateinit var appWidgetManager: AppWidgetManager
+    private lateinit var appWidgetHost: android.appwidget.AppWidgetHost
+    private lateinit var addedWidgetContainer: FrameLayout
+    private lateinit var deleteZone: ImageView
+
+    // selection state for bind/configure flows
+    private var pendingId: Int? = null
+    private var pendingProvider: ComponentName? = null
+    private var currentId: Int? = null
+    private var currentProvider: ComponentName? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        appWidgetManager = WidgetHostSingleton.mgr(this)
+        appWidgetHost    = WidgetHostSingleton.host(this)
+
+        // --- Your existing layout ---
+        addedWidgetContainer = FrameLayout(this)
+        val root = FrameLayout(this)
+
+        val addWidgetButton = TextView(this).apply {
+            text = "➕  Add Widget"
+            textSize = 16f
+            setOnClickListener { showWidgetPickerBottomSheet() }
+            setBackgroundColor(0xFF3F51B5.toInt())
+            setTextColor(0xFFFFFFFF.toInt())
+            setPadding(32,16,32,16)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            )
+        }
+
+        deleteZone = ImageView(this).apply {
+            setImageResource(android.R.drawable.ic_menu_delete)
+            layoutParams = FrameLayout.LayoutParams(400, 200, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            visibility = android.view.View.GONE
+            alpha = 0.8f
+        }
+
+        root.addView(addedWidgetContainer)
+        root.addView(addWidgetButton)
+        root.addView(deleteZone)
+        setContentView(root)
+
+        addedWidgetContainer.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                addedWidgetContainer.viewTreeObserver.removeOnGlobalLayoutListener(this)
+            }
+        })
+    }
+
+    override fun onStart() {
+        super.onStart()
+        WidgetHostSingleton.start(applicationContext)   // host listens while picker is visible
+    }
+
+    override fun onStop() {
+        super.onStop()
+        WidgetHostSingleton.stop()
+    }
+
+    private fun showWidgetPickerBottomSheet() {
+        WidgetPickerBottomSheet(
+            context = this,
+            appWidgetManager = appWidgetManager,
+            appWidgetHost = appWidgetHost
+        ) { providerInfo: AppWidgetProviderInfo, _/*previewId*/: Int ->
+            // Allocate/bind/configure a fresh id for the real widget and return it
+            returnResult(providerInfo)
+        }.show()
+    }
+
+    private fun returnResult(provider: AppWidgetProviderInfo) {
+        val providerCN = provider.provider
+        val chosenId = appWidgetHost.allocateAppWidgetId()
+
+        if (appWidgetManager.bindAppWidgetIdIfAllowed(chosenId, providerCN)) {
+            val cfg = appWidgetManager.getAppWidgetInfo(chosenId)?.configure
+            if (cfg != null) {
+                currentId = chosenId
+                currentProvider = providerCN
+                startActivityForResult(
+                    Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+                        component = cfg
+                        putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, chosenId)
+                    },
+                    REQ_CONFIGURE
+                )
+            } else {
+                finishWithOk(chosenId, providerCN)
+            }
+        } else {
+            pendingId = chosenId
+            pendingProvider = providerCN
+            startActivityForResult(
+                Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, chosenId)
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, providerCN)
+                },
+                REQ_BIND
+            )
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        when (requestCode) {
+            REQ_BIND -> {
+                val id = pendingId ?: return
+                val cn = pendingProvider ?: return
+                pendingId = null; pendingProvider = null
+
+                if (resultCode == RESULT_OK) {
+                    val cfg = appWidgetManager.getAppWidgetInfo(id)?.configure
+                    if (cfg != null) {
+                        currentId = id; currentProvider = cn
+                        startActivityForResult(
+                            Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+                                component = cfg
+                                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                            },
+                            REQ_CONFIGURE
+                        )
+                    } else {
+                        finishWithOk(id, cn)
+                    }
+                } else {
+                    appWidgetHost.deleteAppWidgetId(id)
+                    Toast.makeText(this, "Permission denied", Toast.LENGTH_SHORT).show()
+                }
+            }
+            REQ_CONFIGURE -> {
+                val id = currentId ?: return
+                val cn = currentProvider ?: return
+                currentId = null; currentProvider = null
+                finishWithOk(id, cn)
+            }
+        }
+    }
+
+    private fun finishWithOk(id: Int, cn: ComponentName) {
+        setResult(RESULT_OK, Intent().apply {
+            putExtra(WidgetContract.EXTRA_APPWIDGET_ID, id)
+            putExtra(WidgetContract.EXTRA_PROVIDER, cn.flattenToString())
+        })
+        finish()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        pendingId?.let { appWidgetHost.deleteAppWidgetId(it) } // cleanup canceled binds
+    }
+
+    companion object {
+        private const val REQ_BIND = 2001
+        private const val REQ_CONFIGURE = 2002
+    }
+}
+
+
+package your.pkg.widgets
+
+import android.app.Activity
+import android.appwidget.AppWidgetHostView
+import android.content.ComponentName
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.graphics.Rect
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
+import com.samsung.android.homemode.ui.interfaces.Page
+import com.samsung.android.homemode.ui.pages.PageLayout
+
+/** Return this from PageLayoutFactory for Page.WidgetPage */
+class WidgetsLayout(
+    context: Context,
+    private val page: Page
+) : PageLayout(context, page) {
+
+    // --- PageLayout abstract requirements (keep inert to avoid TODO() crashes)
+    override fun getSwipeToSAParameter(): String = ""
+    override fun getScreenIDSAParameter(): String = ""
+    override fun getShowEventIDSAParameter(): String = ""
+    override fun getContentLayout(): ViewGroup = canvas
+
+    // shared host/manager
+    private val host = WidgetHostSingleton.host(context)
+    private val mgr  = WidgetHostSingleton.mgr(context)
+
+    // UI
+    private val canvas = FrameLayout(context)
+    private val addBtn = Button(context).apply { text = "Add Widget" }
+    private val deleteZone = ImageView(context).apply {
+        setImageResource(android.R.drawable.ic_menu_delete)
+        alpha = 0.85f; visibility = View.GONE
+        layoutParams = LayoutParams(400, 200, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+    }
+
+    init {
+        addView(canvas, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(addBtn, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END))
+        addView(deleteZone)
+        addBtn.setOnClickListener { launchPicker() }
+    }
+
+    companion object {
+        const val REQ_PICK = 1001
+        @JvmStatic internal var lastRequester: java.lang.ref.WeakReference<WidgetsLayout>? = null
+    }
+
+    private fun launchPicker() {
+        lastRequester = java.lang.ref.WeakReference(this)
+        findActivity(context)?.startActivityForResult(
+            Intent(context, WidgetPickerActivity::class.java),
+            REQ_PICK
+        )
+    }
+
+    /** Called by host Activity’s onActivityResult when picker returns RESULT_OK */
+    fun handlePickerResult(data: Intent) {
+        val id = data.getIntExtra(WidgetContract.EXTRA_APPWIDGET_ID, -1)
+        val providerStr = data.getStringExtra(WidgetContract.EXTRA_PROVIDER) ?: return
+        if (id <= 0) return
+        val info = mgr.getAppWidgetInfo(id) ?: return
+
+        val hv: AppWidgetHostView = host.createView(context, id, info).apply {
+            layoutParams = LayoutParams(info.minWidth.coerceAtLeast(400), info.minHeight.coerceAtLeast(400))
+            setAppWidget(id, info)
+        }
+
+        val box = FrameLayout(context).apply {
+            layoutParams = LayoutParams(hv.layoutParams.width, hv.layoutParams.height)
+            x = 320f; y = 160f
+            addView(hv)
+            setOnTouchListener(drag(this, id))
+        }
+        canvas.addView(box)
+    }
+
+    private fun drag(box: View, id: Int): View.OnTouchListener {
+        var dx = 0f; var dy = 0f
+        return View.OnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { dx = box.x - e.rawX; dy = box.y - e.rawY; deleteZone.visibility = View.VISIBLE }
+                MotionEvent.ACTION_MOVE -> { box.x = e.rawX + dx; box.y = e.rawY + dy }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    deleteZone.visibility = View.GONE
+                    if (overDelete(box)) {
+                        (box.parent as ViewGroup).removeView(box)
+                        WidgetHostSingleton.host(context).deleteAppWidgetId(id)
+                    }
+                }
+            }
+            true
+        }
+    }
+
+    private fun overDelete(v: View): Boolean {
+        val a = IntArray(2); v.getLocationOnScreen(a)
+        val b = IntArray(2); deleteZone.getLocationOnScreen(b)
+        val ar = Rect(a[0], a[1], a[0] + v.width, a[1] + v.height)
+        val br = Rect(b[0], b[1], b[0] + deleteZone.width, b[1] + deleteZone.height)
+        return Rect.intersects(ar, br)
+    }
+
+    private fun findActivity(c: Context): Activity? =
+        generateSequence(c) { (it as? ContextWrapper)?.baseContext }
+            .filterIsInstance<Activity>().firstOrNull()
+}
+
+
+
+
+
+<application ...>
+    <activity
+        android:name="your.pkg.widgets.WidgetPickerActivity"
+        android:exported="false"
+        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" />
+</application>
+
+
+
+override fun onStart() {
+    super.onStart()
+    WidgetHostSingleton.start(applicationContext)   // one host for the whole pager
+}
+
+override fun onStop() {
+    super.onStop()
+    WidgetHostSingleton.stop()
+}
+
+override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    super.onActivityResult(requestCode, resultCode, data)
+    if (requestCode == WidgetsLayout.REQ_PICK && resultCode == RESULT_OK && data != null) {
+        WidgetsLayout.lastRequester?.get()?.handlePickerResult(data)
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##############
 package your.pkg.widgets
 
 import android.appwidget.AppWidgetHostView
