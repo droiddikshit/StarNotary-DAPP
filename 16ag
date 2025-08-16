@@ -1,3 +1,94 @@
+rv.adapter = object : RecyclerView.Adapter<VH>() {
+    override fun getItemCount() = providers.size
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val row = LinearLayout(this@WidgetPickerActivity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 16)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        return VH(row)
+    }
+
+    override fun onBindViewHolder(h: VH, position: Int) {
+        val info = providers[position]
+
+        // Allocate an id for THE PREVIEW
+        val previewId = host.allocateAppWidgetId()
+        h.currentId = previewId
+
+        // Ask for bind permission if needed (preview requires a bound id on many OEMs)
+        if (!mgr.bindAppWidgetIdIfAllowed(previewId, info.provider)) {
+            h.bindText("${info.label} (tap to grant)") {
+                pendingId = previewId
+                pendingProvider = info.provider
+                bindLauncher.launch(
+                    Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                        putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, previewId)
+                        putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                    }
+                )
+            }
+            return
+        }
+
+        try {
+            // IMPORTANT: framework-themed context to avoid AppCompat* in RemoteViews
+            val native = android.view.ContextThemeWrapper(
+                applicationContext,
+                android.R.style.Theme_DeviceDefault
+            )
+
+            val preview = host.createView(native, previewId, info).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    info.minWidth.coerceAtLeast(320),
+                    info.minHeight.coerceAtLeast(320)
+                )
+                setAppWidget(previewId, info)
+            }
+
+            h.bindPreview(info.label ?: info.provider.className, preview) {
+                // User selects row: allocate a FRESH id for the actual widget,
+                // bind (or request bind), return that id to the caller.
+                val chosenId = host.allocateAppWidgetId()
+                if (mgr.bindAppWidgetIdIfAllowed(chosenId, info.provider)) {
+                    finishWithOk(chosenId, info.provider)
+                } else {
+                    pendingId = chosenId
+                    pendingProvider = info.provider
+                    bindLauncher.launch(
+                        Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, chosenId)
+                            putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                        }
+                    )
+                }
+            }
+        } catch (e: android.content.res.Resources.NotFoundException) {
+            // Widget that can’t render in third-party context (e.g., OEM clock)
+            host.deleteAppWidgetId(previewId)
+            h.bindText("${info.label} (not supported)") {}
+        } catch (t: Throwable) {
+            host.deleteAppWidgetId(previewId)
+            h.bindText("${info.label} (failed)") {}
+        }
+    }
+
+    override fun onViewRecycled(h: VH) {
+        // Clean up PREVIEW ids only (selected ids are returned by finishWithOk)
+        h.currentId?.let { host.deleteAppWidgetId(it) }
+        h.currentId = null
+    }
+}
+
+
+
+
+
+
 
 package your.pkg.widgets
 
