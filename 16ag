@@ -1,5 +1,158 @@
 package your.pkg.ui.widgets
 
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Context
+import android.os.Bundle
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialogFragment
+import kotlin.math.abs
+
+/**
+ * Bottom sheet that shows square-ish widgets with live previews.
+ * Uses its own AppWidgetHost (previewHost). Cleans up allocated ids when recycled.
+ */
+class WidgetPickerBottomSheet(
+    private val activityContext: Context,
+    private val appContext: Context,
+    private val appWidgetManager: AppWidgetManager,
+    private val previewHost: AppWidgetHost,
+    private val onRequestBind: (widgetId: Int, provider: ComponentName, cont: (Boolean) -> Unit) -> Unit,
+    private val onWidgetChosen: (AppWidgetProviderInfo, Int) -> Unit,
+    private val onDismiss: () -> Unit
+) : BottomSheetDialogFragment() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setStyle(STYLE_NO_TITLE, 0)
+    }
+
+    override fun onCreateDialog(savedInstanceState: Bundle?) =
+        object : com.google.android.material.bottomsheet.BottomSheetDialog(requireContext()) {
+            override fun onDetachedFromWindow() {
+                super.onDetachedFromWindow()
+                onDismiss()
+            }
+        }
+
+    override fun onStart() {
+        super.onStart()
+        // Host is started by the fragment before showing; keep that contract.
+    }
+
+    override fun onCreateView(inflater: android.view.LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?) =
+        RecyclerView(requireContext()).apply {
+            layoutManager = GridLayoutManager(requireContext(), 2)
+            adapter = buildAdapter()
+        }
+
+    private fun buildAdapter(): RecyclerView.Adapter<VH> {
+        val density = activityContext.resources.displayMetrics.density
+        val maxPx = (210 * density).toInt()
+        val tolPx = (50 * density).toInt()
+
+        val providers = appWidgetManager.installedProviders.filter {
+            val w = (it.minWidth * density).toInt()
+            val h = (it.minHeight * density).toInt()
+            abs(w - h) <= tolPx && w <= maxPx && h <= maxPx
+        }
+
+        return object : RecyclerView.Adapter<VH>() {
+            override fun onCreateViewHolder(p: ViewGroup, vt: Int) =
+                VH(LinearLayout(activityContext).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(16, 16, 16, 16)
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                })
+
+            override fun getItemCount() = providers.size
+
+            override fun onBindViewHolder(h: VH, pos: Int) {
+                val provider = providers[pos]
+                val widgetId = previewHost.allocateAppWidgetId()
+                h.currentWidgetId = widgetId
+
+                val bound = appWidgetManager.bindAppWidgetIdIfAllowed(widgetId, provider.provider)
+                if (!bound) {
+                    // Ask user to grant for this provider
+                    h.bindTextOnly("${provider.label} (tap to grant)") {
+                        onRequestBind(widgetId, provider.provider) { ok ->
+                            if (ok) notifyItemChanged(pos) else {
+                                previewHost.deleteAppWidgetId(widgetId)
+                                h.currentWidgetId = null
+                            }
+                        }
+                    }
+                    return
+                }
+
+                val preview = previewHost.createView(activityContext, widgetId, provider).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        provider.minWidth.coerceAtLeast(400),
+                        provider.minHeight.coerceAtLeast(400)
+                    )
+                    setAppWidget(widgetId, provider)
+                }
+
+                h.bindPreview(provider.label ?: provider.provider.className, preview) {
+                    dismissAllowingStateLoss()
+                    onWidgetChosen(provider, widgetId) // promote to canvas
+                }
+            }
+
+            override fun onViewRecycled(h: VH) {
+                h.currentWidgetId?.let { previewHost.deleteAppWidgetId(it) }
+                h.currentWidgetId = null
+                super.onViewRecycled(h)
+            }
+        }
+    }
+
+    class VH(view: android.view.View) : RecyclerView.ViewHolder(view) {
+        var currentWidgetId: Int? = null
+
+        fun bindTextOnly(label: CharSequence, onClick: () -> Unit) {
+            (itemView as ViewGroup).apply {
+                removeAllViews()
+                addView(TextView(context).apply {
+                    text = label
+                    setPadding(0, 0, 0, 8)
+                })
+                setOnClickListener { onClick() }
+            }
+        }
+
+        fun bindPreview(label: CharSequence, hostView: android.appwidget.AppWidgetHostView, onClick: () -> Unit) {
+            (itemView as ViewGroup).apply {
+                removeAllViews()
+                addView(TextView(context).apply {
+                    text = label
+                    setPadding(0, 0, 0, 8)
+                })
+                addView(hostView)
+                setOnClickListener { onClick() }
+            }
+            currentWidgetId = hostView.appWidgetId
+        }
+    }
+}
+
+
+
+
+
+
+package your.pkg.ui.widgets
+
 import android.app.Activity
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetHostView
