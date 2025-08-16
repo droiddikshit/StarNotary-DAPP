@@ -1,4 +1,250 @@
 
+
+package your.pkg.widgets
+
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Bundle
+import android.util.Log
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import kotlin.math.max
+
+class WidgetPickerActivity : Activity() {
+
+    private lateinit var mgr: AppWidgetManager
+    private lateinit var host: AppWidgetHost
+
+    companion object {
+        private const val REQ_BIND   = 1001
+        private const val REQ_CONFIG = 1002
+        private const val TAG = "WidgetPicker"
+    }
+
+    private var pendingId: Int? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        mgr  = WidgetHostSingleton.mgr(this)
+        host = WidgetHostSingleton.host(this)
+
+        val rv = RecyclerView(this).apply {
+            setHasFixedSize(true)
+            layoutManager = GridLayoutManager(this@WidgetPickerActivity, 3) // 3 cols; tweak if needed
+        }
+        setContentView(rv)
+
+        // Show ALL providers (no shape/size filtering)
+        val providers = mgr.installedProviders
+            .sortedBy { it.loadLabel(packageManager)?.toString() ?: it.provider.className }
+
+        if (providers.isEmpty()) {
+            Toast.makeText(this, "No widgets found", Toast.LENGTH_SHORT).show()
+            finish(); return
+        }
+
+        rv.adapter = object : RecyclerView.Adapter<VH>() {
+
+            private var cellW = 0
+            override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+                recyclerView.post {
+                    val span = (recyclerView.layoutManager as GridLayoutManager).spanCount
+                    cellW = recyclerView.width / max(1, span)
+                    notifyDataSetChanged()
+                }
+            }
+
+            override fun getItemCount() = providers.size
+
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                val row = LinearLayout(this@WidgetPickerActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(16, 16, 16, 16)
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                val title = TextView(this@WidgetPickerActivity).apply { setPadding(0, 0, 0, 8) }
+                val previewHolder = FrameLayout(this@WidgetPickerActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                row.addView(title)
+                row.addView(previewHolder)
+                return VH(row, title, previewHolder)
+            }
+
+            override fun onBindViewHolder(h: VH, pos: Int) {
+                val info = providers[pos]
+                h.title.text = info.loadLabel(packageManager) ?: info.provider.className
+
+                // Clean any old preview
+                h.previewId?.let { host.deleteAppWidgetId(it) }
+                h.previewId = null
+                h.previewHolder.removeAllViews()
+
+                // Allocate a PREVIEW id so OEMs render preview content
+                val previewId = host.allocateAppWidgetId()
+                h.previewId = previewId
+
+                val density = resources.displayMetrics.density
+                // minWidth/minHeight are in dp; fall back to 100dp if 0
+                val minWpx = max(1, (max(100, info.minWidth))  * density).toInt()
+                val minHpx = max(1, (max(100, info.minHeight)) * density).toInt()
+
+                // Scale to cell width, maintain aspect ratio
+                val targetW = if (cellW > 0) cellW - h.itemView.paddingLeft - h.itemView.paddingRight else minWpx
+                val scale   = if (minWpx > 0) targetW.toFloat() / minWpx else 1f
+                val targetH = max(1, (minHpx * scale).toInt())
+
+                val hv: AppWidgetHostView? = try {
+                    host.createView(this@WidgetPickerActivity, previewId, info).apply {
+                        layoutParams = FrameLayout.LayoutParams(targetW, targetH)
+                        // Helps some OEMs render the preview
+                        setAppWidget(previewId, info)
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Preview create failed for ${info.provider}: $t")
+                    null
+                }
+
+                if (hv != null) {
+                    h.previewHolder.addView(hv)
+                } else {
+                    @Suppress("SetTextI18n")
+                    h.previewHolder.addView(TextView(this@WidgetPickerActivity).apply {
+                        text = "Preview unavailable"
+                    })
+                }
+
+                h.itemView.setOnClickListener { allocateAndBindReal(info) }
+            }
+
+            override fun onViewRecycled(h: VH) {
+                h.previewId?.let { host.deleteAppWidgetId(it) }
+                h.previewId = null
+                h.previewHolder.removeAllViews()
+            }
+        }
+    }
+
+    override fun onStart() { super.onStart(); WidgetHostSingleton.start(applicationContext) }
+    override fun onStop()  { super.onStop();  WidgetHostSingleton.stop() }
+
+    private fun allocateAndBindReal(info: AppWidgetProviderInfo) {
+        val id = host.allocateAppWidgetId()
+        pendingId = id
+        val provider = info.provider
+        Log.d(TAG, "Alloc real id=$id for ${provider.flattenToString()}")
+
+        val bound = try { mgr.bindAppWidgetIdIfAllowed(id, provider) } catch (_: Throwable) { false }
+        if (!bound) {
+            val bind = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider)
+            }
+            startActivityForResult(bind, REQ_BIND)
+            return
+        }
+        maybeConfigureOrFinish(id)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        when (requestCode) {
+            REQ_BIND -> {
+                val id = pendingId ?: -1
+                pendingId = null
+                if (resultCode == RESULT_OK && id != -1) {
+                    maybeConfigureOrFinish(id)
+                } else {
+                    if (id != -1) host.deleteAppWidgetId(id)
+                    setResult(RESULT_CANCELED); finish()
+                }
+            }
+            REQ_CONFIG -> {
+                val id = data?.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, -1) ?: -1
+                if (id != -1) finishWithOk(id) else { setResult(RESULT_CANCELED); finish() }
+            }
+        }
+    }
+
+    /** Only launch config if exported & callable; otherwise return the id. */
+    private fun maybeConfigureOrFinish(id: Int) {
+        val info = mgr.getAppWidgetInfo(id)
+        val cfg: ComponentName? = info?.configure
+        if (cfg == null) { finishWithOk(id); return }
+
+        val ri = packageManager.resolveActivity(Intent().setComponent(cfg), 0)
+        val exported = ri?.activityInfo?.exported == true
+        val requiredPerm = ri?.activityInfo?.permission
+        val permGranted = requiredPerm == null ||
+            (Build.VERSION.SDK_INT < 23 || checkSelfPermission(requiredPerm) == PackageManager.PERMISSION_GRANTED)
+
+        if (exported && permGranted) {
+            try {
+                startActivityForResult(
+                    Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+                        component = cfg
+                        putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                    },
+                    REQ_CONFIG
+                )
+                return
+            } catch (t: Throwable) {
+                Log.w(TAG, "Config blocked: $t")
+            }
+        }
+        finishWithOk(id)
+    }
+
+    private fun finishWithOk(id: Int) {
+        setResult(RESULT_OK, Intent().apply {
+            putExtra(WidgetContract.EXTRA_APPWIDGET_ID, id)
+        })
+        finish()
+    }
+
+    class VH(
+        val row: LinearLayout,
+        val title: TextView,
+        val previewHolder: FrameLayout
+    ) : RecyclerView.ViewHolder(row) {
+        var previewId: Int? = null
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+===
 package your.pkg.widgets
 
 import android.app.Activity
