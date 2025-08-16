@@ -1,6 +1,249 @@
 
 package your.pkg.widgets
 
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.res.Resources
+import android.graphics.Rect
+import android.util.Log
+import android.view.*
+import android.widget.*
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import kotlin.math.abs
+
+/** Return this directly from PageFactory for Page.WidgetPage */
+class WidgetsPageLayout(
+    context: Context,
+    @Suppress("UNUSED_PARAMETER") page: Any? = null
+) : FrameLayout(context) {
+
+    /** Provide this from the pager host if you want real bind results. */
+    var bindDelegate: AppWidgetBindDelegate? = null
+
+    // Shared host/manager (process-wide)
+    private val appCtx = context.applicationContext
+    private val host: AppWidgetHost = WidgetHost.host(appCtx)
+    private val mgr: AppWidgetManager = WidgetHost.mgr(appCtx)
+
+    // UI: canvas, add button, delete zone
+    private val canvas = FrameLayout(context)
+    private val addBtn = Button(context).apply { text = "Add Widget" }
+    private val deleteZone = ImageView(context).apply {
+        setImageResource(android.R.drawable.ic_menu_delete)
+        alpha = 0.85f
+        visibility = View.GONE
+        layoutParams = LayoutParams(400, 200, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+    }
+
+    init {
+        layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
+        addView(canvas, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(addBtn, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
+            val m = (16 * resources.displayMetrics.density).toInt()
+            setMargins(m, m, m, m)
+        })
+        addView(deleteZone)
+
+        addBtn.setOnClickListener { showPicker() }
+    }
+
+    /** Pager attaches/detaches views while swiping — start/stop host here */
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        WidgetHost.start()
+    }
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        WidgetHost.stop()
+    }
+
+    // ---------- Picker ----------
+
+    private val OEM_PREFIXES = listOf(
+        "com.sec.android.", "com.samsung.android.", "com.android.systemui",
+        "com.miui.", "com.coloros.", "com.oppo.", "com.vivo.", "com.huawei.", "com.hihonor.", "com.transsion."
+    )
+    private fun vendorLocked(p: AppWidgetProviderInfo) =
+        OEM_PREFIXES.any { p.provider.packageName.startsWith(it) } ||
+        p.provider.packageName.contains("clockpackage", true) ||
+        p.provider.packageName.contains("launcher", true)
+
+    private fun showPicker() {
+        val d = resources.displayMetrics.density
+        val maxPx = (210 * d).toInt()
+        val tolPx = (50 * d).toInt()
+
+        val providers = mgr.installedProviders.filter {
+            !vendorLocked(it) && run {
+                val w = (it.minWidth * d).toInt()
+                val h = (it.minHeight * d).toInt()
+                abs(w - h) <= tolPx && w <= maxPx && h <= maxPx
+            }
+        }
+
+        val sheet = BottomSheetDialog(context)
+        val rv = RecyclerView(context).apply { layoutManager = GridLayoutManager(context, 2) }
+        sheet.setContentView(rv)
+
+        rv.adapter = object : RecyclerView.Adapter<VH>() {
+            override fun getItemCount() = providers.size
+            override fun onCreateViewHolder(p: ViewGroup, vt: Int) =
+                VH(LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(16, 16, 16, 16) })
+
+            override fun onBindViewHolder(h: VH, pos: Int) {
+                val info = providers[pos]
+                val id = host.allocateAppWidgetId()
+                h.currentId = id
+
+                if (!mgr.bindAppWidgetIdIfAllowed(id, info.provider)) {
+                    h.bindText("${info.label} (tap to grant)") {
+                        requestBind(id, info.provider) { ok ->
+                            if (ok) notifyItemChanged(pos) else host.deleteAppWidgetId(id)
+                        }
+                    }
+                    return
+                }
+
+                val nativeCtx = ContextThemeWrapper(appCtx, android.R.style.Theme_DeviceDefault)
+                try {
+                    val preview = host.createView(nativeCtx, id, info).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            info.minWidth.coerceAtLeast(400),
+                            info.minHeight.coerceAtLeast(400)
+                        )
+                        setAppWidget(id, info)
+                    }
+                    h.bindPreview(info.label ?: info.provider.className, preview) {
+                        sheet.dismiss()
+                        addToCanvas(info, id)
+                    }
+                } catch (e: Resources.NotFoundException) {
+                    Log.w("WidgetPicker", "OEM-locked ${info.provider}", e)
+                    host.deleteAppWidgetId(id)
+                    h.bindText("${info.label} (not supported)") {}
+                } catch (t: Throwable) {
+                    Log.e("WidgetPicker", "Preview failed for ${info.provider}", t)
+                    host.deleteAppWidgetId(id)
+                    h.bindText("${info.label} (failed)") {}
+                }
+            }
+
+            override fun onViewRecycled(h: VH) {
+                h.currentId?.let { host.deleteAppWidgetId(it) }
+                h.currentId = null
+            }
+        }
+
+        sheet.show()
+    }
+
+    private fun requestBind(id: Int, provider: ComponentName, cb: (Boolean) -> Unit) {
+        bindDelegate?.requestBind(id, provider, cb) ?: run {
+            // Fallback best-effort (no result callback)
+            try {
+                context.startActivity(
+                    Intent(AppWidgetManager.ACTION_APPWIDGET_BIND)
+                        .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                        .putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (_: Throwable) { /* ignore */ }
+            cb(false)
+        }
+    }
+
+    // ---------- Canvas ----------
+
+    private fun addToCanvas(info: AppWidgetProviderInfo, id: Int) {
+        val nativeCtx = ContextThemeWrapper(appCtx, android.R.style.Theme_DeviceDefault)
+        val hostView = host.createView(nativeCtx, id, info).apply {
+            layoutParams = LayoutParams(
+                info.minWidth.coerceAtLeast(400),
+                info.minHeight.coerceAtLeast(400)
+            )
+            setAppWidget(id, info)
+        }
+
+        val box = FrameLayout(context).apply {
+            layoutParams = LayoutParams(hostView.layoutParams.width, hostView.layoutParams.height)
+            x = 320f; y = 160f
+            addView(hostView)
+            setOnTouchListener(drag(this, id))
+        }
+
+        if (!overlapsAny(box)) canvas.addView(box)
+        else Toast.makeText(context, "❌ Overlaps", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun drag(v: View, id: Int): View.OnTouchListener {
+        var dx = 0f; var dy = 0f
+        return View.OnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dx = v.x - e.rawX; dy = v.y - e.rawY
+                    deleteZone.visibility = View.VISIBLE
+                }
+                MotionEvent.ACTION_MOVE -> { v.x = e.rawX + dx; v.y = e.rawY + dy }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    deleteZone.visibility = View.GONE
+                    if (overDelete(v)) (v.parent as? ViewGroup)?.removeView(v)
+                }
+            }
+            true
+        }
+    }
+
+    private fun overDelete(v: View): Boolean {
+        val a = IntArray(2); v.getLocationOnScreen(a)
+        val b = IntArray(2); deleteZone.getLocationOnScreen(b)
+        val ar = Rect(a[0], a[1], a[0] + v.width, a[1] + v.height)
+        val br = Rect(b[0], b[1], b[0] + deleteZone.width, b[1] + deleteZone.height)
+        return Rect.intersects(ar, br)
+    }
+
+    private fun overlapsAny(v: View): Boolean {
+        val r = Rect(v.x.toInt(), v.y.toInt(), v.x.toInt() + v.width, v.y.toInt() + v.height)
+        val t = Rect()
+        for (i in 0 until canvas.childCount) {
+            val c = canvas.getChildAt(i); if (c === v) continue
+            c.getHitRect(t)
+            if (Rect(t).intersect(r)) return true
+        }
+        return false
+    }
+
+    class VH(view: View) : RecyclerView.ViewHolder(view) {
+        var currentId: Int? = null
+        fun bindText(text: String, onClick: () -> Unit) =
+            (itemView as ViewGroup).apply {
+                removeAllViews()
+                addView(TextView(context).apply { this.text = text })
+                setOnClickListener { onClick() }
+            }
+        fun bindPreview(label: CharSequence, hv: AppWidgetHostView, onClick: () -> Unit) =
+            (itemView as ViewGroup).apply {
+                removeAllViews()
+                addView(TextView(context).apply { text = label; setPadding(0, 0, 0, 8) })
+                addView(hv)
+                setOnClickListener { onClick() }
+            }
+    }
+}
+
+
+
+
+
+
+package your.pkg.widgets
+
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 
