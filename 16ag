@@ -1,3 +1,230 @@
+
+package your.pkg.widgets
+
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Intent
+import android.content.res.Resources
+import android.os.Bundle
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import kotlin.math.abs
+
+class WidgetPickerActivity : AppCompatActivity() {
+
+    private val host by lazy { WidgetHostSingleton.host(this) }
+    private val mgr  by lazy { WidgetHostSingleton.mgr(this) }
+
+    // ids used while requesting bind; cleaned if canceled
+    private var pendingId: Int? = null
+    private var pendingProvider: ComponentName? = null
+
+    private var currentId: Int? = null
+    private var currentProvider: ComponentName? = null
+
+    private val bindLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { r ->
+        val id = pendingId ?: return@registerForActivityResult
+        val cn = pendingProvider ?: return@registerForActivityResult
+        pendingId = null; pendingProvider = null
+        if (r.resultCode == RESULT_OK) onBound(id, cn) else host.deleteAppWidgetId(id)
+    }
+
+    private val configureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        finishWithOk(currentId!!, currentProvider!!)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        WidgetHostSingleton.start(applicationContext)   // host listens during picker
+    }
+
+    override fun onStop() {
+        super.onStop()
+        WidgetHostSingleton.stop()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        showProvidersSheet()
+    }
+
+    private fun showProvidersSheet() {
+        val d = resources.displayMetrics.density
+        val maxPx = (210 * d).toInt()
+        val tolPx = (50 * d).toInt()
+
+        // Filter out launcher/OEM widgets that won't render in 3rd-party context
+        val providers = mgr.installedProviders.filter { info ->
+            val pkg = info.provider.packageName
+            val oem = listOf(
+                "com.sec.android.","com.samsung.android.","com.android.systemui",
+                "com.miui.","com.coloros.","com.oppo.","com.vivo.","com.huawei.","com.hihonor.","com.transsion."
+            ).any { pkg.startsWith(it) } || pkg.contains("clockpackage", true) || pkg.contains("launcher", true)
+            if (oem) return@filter false
+            val w = (info.minWidth * d).toInt()
+            val h = (info.minHeight * d).toInt()
+            abs(w - h) <= tolPx && w <= maxPx && h <= maxPx
+        }
+
+        val sheet = BottomSheetDialog(this)
+        val rv = RecyclerView(this).apply { layoutManager = GridLayoutManager(this@WidgetPickerActivity, 2) }
+
+        rv.adapter = object : RecyclerView.Adapter<VH>() {
+            override fun getItemCount() = providers.size
+
+            override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                val row = LinearLayout(this@WidgetPickerActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(16,16,16,16)
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                }
+                return VH(row)
+            }
+
+            override fun onBindViewHolder(h: VH, position: Int) {
+                val info: AppWidgetProviderInfo = providers[position]
+
+                // Allocate a PREVIEW id and bind it (many OEMs need bound id to show preview)
+                val previewId = host.allocateAppWidgetId()
+                h.currentId = previewId
+
+                if (!mgr.bindAppWidgetIdIfAllowed(previewId, info.provider)) {
+                    h.bindText("${info.label} (tap to grant)") {
+                        pendingId = previewId
+                        pendingProvider = info.provider
+                        bindLauncher.launch(
+                            Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, previewId)
+                                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                            }
+                        )
+                    }
+                    return
+                }
+
+                try {
+                    // host.onCreateView already forces a framework theme
+                    val preview: AppWidgetHostView = host.createView(this@WidgetPickerActivity, previewId, info).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            info.minWidth.coerceAtLeast(320),
+                            info.minHeight.coerceAtLeast(320)
+                        )
+                        setAppWidget(previewId, info)
+                    }
+
+                    // On click, allocate a FRESH id for the actual widget and return it
+                    h.bindPreview(info.label ?: info.provider.className, preview) {
+                        val chosenId = host.allocateAppWidgetId()
+                        if (mgr.bindAppWidgetIdIfAllowed(chosenId, info.provider)) {
+                            finishWithOk(chosenId, info.provider)
+                        } else {
+                            pendingId = chosenId
+                            pendingProvider = info.provider
+                            bindLauncher.launch(
+                                Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, chosenId)
+                                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                                }
+                            )
+                        }
+                    }
+                } catch (_: Resources.NotFoundException) {
+                    // OEM widget that can't render in third-party context
+                    host.deleteAppWidgetId(previewId)
+                    h.bindText("${info.label} (not supported)") {}
+                } catch (_: Throwable) {
+                    host.deleteAppWidgetId(previewId)
+                    h.bindText("${info.label} (failed)") {}
+                }
+            }
+
+            override fun onViewRecycled(h: VH) {
+                // delete only PREVIEW ids; the selected id is returned to caller and must persist
+                h.currentId?.let { host.deleteAppWidgetId(it) }
+                h.currentId = null
+            }
+        }
+
+        sheet.setOnDismissListener { if (!isFinishing) finish() }
+        sheet.setContentView(rv)
+        sheet.show()
+    }
+
+    private fun onBound(id: Int, cn: ComponentName) {
+        currentId = id
+        currentProvider = cn
+        val cfg = mgr.getAppWidgetInfo(id)?.configure
+        if (cfg != null) {
+            configureLauncher.launch(
+                Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+                    component = cfg
+                    putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                }
+            )
+        } else {
+            finishWithOk(id, cn)
+        }
+    }
+
+    private fun finishWithOk(id: Int, cn: ComponentName) {
+        setResult(RESULT_OK, Intent().apply {
+            putExtra(WidgetContract.EXTRA_APPWIDGET_ID, id)
+            putExtra(WidgetContract.EXTRA_PROVIDER, cn.flattenToString())
+        })
+        finish()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // If user bailed mid-bind, free pending preview id
+        pendingId?.let { host.deleteAppWidgetId(it) }
+    }
+
+    private class VH(val root: LinearLayout) : RecyclerView.ViewHolder(root) {
+        var currentId: Int? = null
+
+        fun bindText(label: CharSequence, onClick: () -> Unit) {
+            root.removeAllViews()
+            root.addView(TextView(root.context).apply { text = label })
+            root.setOnClickListener { onClick() }
+        }
+
+        fun bindPreview(label: CharSequence, hv: AppWidgetHostView, onClick: () -> Unit) {
+            root.removeAllViews()
+            root.addView(TextView(root.context).apply { text = label; setPadding(0,0,0,8) })
+            root.addView(hv)
+            root.setOnClickListener { onClick() }
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+)))))))
+
+
 rv.adapter = object : RecyclerView.Adapter<VH>() {
     override fun getItemCount() = providers.size
 
