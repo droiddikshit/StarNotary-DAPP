@@ -1,3 +1,19 @@
+
+package your.pkg.widgets
+
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+
+/** Let the container (pager host) perform ACTION_APPWIDGET_BIND and return the result. */
+interface AppWidgetBindDelegate {
+    fun requestBind(widgetId: Int, provider: ComponentName, onResult: (Boolean) -> Unit)
+}
+
+
+
+
+
+
 package your.pkg.widgets
 
 import android.appwidget.AppWidgetHost
