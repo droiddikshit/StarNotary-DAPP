@@ -1,3 +1,39 @@
+private fun returnResult(info: AppWidgetProviderInfo) {
+    val appWidgetId = host.allocateAppWidgetId()
+
+    val success = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        // For system app with BIND_APPWIDGET
+        appWidgetManager.bindAppWidgetIdIfAllowed(appWidgetId, info.provider)
+    } else {
+        false
+    }
+
+    if (!success) {
+        // Fallback → ask system to bind
+        val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+        }
+        startActivityForResult(intent, REQUEST_BIND_WIDGET)
+        return
+    }
+
+    // Don’t start widget config activity if not exported (Samsung blocks it)
+    val data = Intent().apply {
+        putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+        putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+    }
+    setResult(Activity.RESULT_OK, data)
+    finish()
+}
+
+
+
+
+
+
+
+
 package your.pkg.widgets
 
 object WidgetContract {
