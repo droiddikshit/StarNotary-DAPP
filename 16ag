@@ -1,0 +1,224 @@
+package your.pkg.ui.widgets
+
+import android.app.Activity
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Intent
+import android.graphics.Rect
+import android.os.Bundle
+import android.view.*
+import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.doOnDetach
+import androidx.fragment.app.Fragment
+import your.pkg.R
+import kotlin.math.abs
+
+/**
+ * Fragment that hosts placed widgets and opens a bottom-sheet to pick widgets.
+ * Key points:
+ * - Two hosts: one for previews, one for live canvas
+ * - Hosts started/stopped in correct lifecycle callbacks
+ * - Activity context for createView; application context for Host/Manager
+ */
+class WidgetsFragment : Fragment(R.layout.widget_fragment_layout) {
+
+    companion object {
+        private const val LIVE_HOST_ID = 1024
+        private const val PREVIEW_HOST_ID = 1025
+    }
+
+    private lateinit var appWidgetMgr: AppWidgetManager
+    private lateinit var liveHost: AppWidgetHost
+    private lateinit var previewHost: AppWidgetHost
+
+    private lateinit var widgetsLayoutContainer: FrameLayout
+    private lateinit var addWidgetBtn: Button
+    private lateinit var deleteZone: ImageView
+
+    // Continuation for binding permission from preview rows
+    private var pendingBindContinuation: ((Boolean) -> Unit)? = null
+
+    private val bindLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+            pendingBindContinuation?.invoke(res.resultCode == Activity.RESULT_OK)
+            pendingBindContinuation = null
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val appCtx = requireContext().applicationContext
+        appWidgetMgr = AppWidgetManager.getInstance(appCtx)
+        liveHost = AppWidgetHost(appCtx, LIVE_HOST_ID)
+        previewHost = AppWidgetHost(appCtx, PREVIEW_HOST_ID)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Listen for updates only while the fragment is started/visible
+        liveHost.startListening()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        liveHost.stopListening()
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        widgetsLayoutContainer = view.findViewById(R.id.widgets_fragment_container)
+        addWidgetBtn = view.findViewById(R.id.add_widget_button)
+
+        deleteZone = ImageView(requireContext()).apply {
+            setImageResource(android.R.drawable.ic_menu_delete)
+            layoutParams = FrameLayout.LayoutParams(
+                resources.displayMetrics.density.times(200f).toInt(),
+                resources.displayMetrics.density.times(80f).toInt(),
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            )
+            alpha = 0.85f
+            visibility = View.GONE
+        }
+        (view as ViewGroup).addView(deleteZone)
+
+        addWidgetBtn.setOnClickListener { showWidgetPickerBottomSheet() }
+    }
+
+    // ---------- Picker ----------
+
+    private fun showWidgetPickerBottomSheet() {
+        // Start listening ONLY for the preview session
+        previewHost.startListening()
+
+        val sheet = WidgetPickerBottomSheet(
+            activityContext = requireActivity(),             // for createView / theming
+            appContext = requireContext().applicationContext,// for Host/Manager
+            appWidgetManager = appWidgetMgr,
+            previewHost = previewHost,
+            onRequestBind = ::requestBind,
+            onWidgetChosen = { provider, widgetId ->
+                // Stop preview host now; the chosen id is promoted to live host
+                previewHost.stopListening()
+                addWidgetToCanvas(provider, widgetId)
+            },
+            onDismiss = {
+                // Safety net
+                previewHost.stopListening()
+            }
+        )
+        sheet.show(parentFragmentManager, "WidgetPickerBottomSheet")
+    }
+
+    private fun requestBind(widgetId: Int, provider: ComponentName, cont: (Boolean) -> Unit) {
+        val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, provider)
+        }
+        pendingBindContinuation = cont
+        bindLauncher.launch(intent)
+    }
+
+    // ---------- Canvas placement & interactions ----------
+
+    private fun addWidgetToCanvas(provider: AppWidgetProviderInfo, widgetId: Int) {
+        val width = provider.minWidth.coerceAtLeast(400)
+        val height = provider.minHeight.coerceAtLeast(400)
+
+        val hostView = liveHost.createView(requireContext(), widgetId, provider).apply {
+            layoutParams = FrameLayout.LayoutParams(width, height)
+            setAppWidget(widgetId, provider)
+        }
+
+        val container = FrameLayout(requireContext()).apply {
+            layoutParams = FrameLayout.LayoutParams(width, height)
+            x = 400f
+            y = 150f
+            addView(hostView)
+            setOnTouchListener(widgetTouchListener(this, widgetId, provider))
+        }
+
+        if (!isOverlappingAny(container)) {
+            widgetsLayoutContainer.addView(container)
+        } else {
+            Toast.makeText(requireContext(), "❌ Can't place: Overlapping", Toast.LENGTH_SHORT).show()
+            // Optionally free the id if you won't use it
+            // liveHost.deleteAppWidgetId(widgetId)
+        }
+
+        // Clean up when container detaches (e.g., removed)
+        container.doOnDetach {
+            // If you want to delete the widget when removed from canvas:
+            // liveHost.deleteAppWidgetId(widgetId)
+        }
+    }
+
+    private fun widgetTouchListener(widget: View, widgetId: Int, provider: AppWidgetProviderInfo): View.OnTouchListener {
+        var dX = 0f
+        var dY = 0f
+        var dragging = false
+
+        return View.OnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    dX = widget.x - event.rawX
+                    dY = widget.y - event.rawY
+                    dragging = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    widget.x = event.rawX + dX
+                    widget.y = event.rawY + dY
+                    deleteZone.visibility = View.VISIBLE
+                    dragging = true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    deleteZone.visibility = View.GONE
+                    if (isOverDeleteZone(widget)) {
+                        (widget.parent as? ViewGroup)?.removeView(widget)
+                        Toast.makeText(requireContext(), "🗑️ Widget Removed", Toast.LENGTH_SHORT).show()
+                        // liveHost.deleteAppWidgetId(widgetId) // if you want to free the id
+                    } else if (isOverlappingAny(widget)) {
+                        Toast.makeText(requireContext(), "❌ Overlaps with existing", Toast.LENGTH_SHORT).show()
+                        // Snap back somewhere safe
+                        widget.x = 100f
+                        widget.y = 100f
+                    } else if (!dragging) {
+                        // tap
+                        // Optionally forward click to widget
+                        (widget as? ViewGroup)?.getChildAt(0)?.performClick()
+                    }
+                }
+            }
+            true
+        }
+    }
+
+    private fun isOverDeleteZone(view: View): Boolean {
+        val loc = IntArray(2)
+        deleteZone.getLocationOnScreen(loc)
+        val zx = loc[0]
+        val zy = loc[1]
+        val cx = (view.x + view.width / 2f).toInt()
+        val cy = (view.y + view.height / 2f).toInt()
+        return (cx in zx..(zx + deleteZone.width)) && (cy in zy..(zy + deleteZone.height))
+    }
+
+    private fun isOverlappingAny(view: View): Boolean {
+        val out = Rect()
+        val vr = Rect(
+            view.x.toInt(),
+            view.y.toInt(),
+            view.x.toInt() + view.width,
+            view.y.toInt() + view.height
+        )
+        for (i in 0 until widgetsLayoutContainer.childCount) {
+            val child = widgetsLayoutContainer.getChildAt(i)
+            if (child === view) continue
+            child.getHitRect(out)
+            if (Rect(out).intersect(vr)) return true
+        }
+        return false
+    }
+}
