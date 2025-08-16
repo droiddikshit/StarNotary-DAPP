@@ -1,3 +1,15 @@
+package your.pkg.widgets
+
+object WidgetContract {
+    const val EXTRA_APPWIDGET_ID = "extra_appwidget_id"
+    const val EXTRA_PROVIDER = "extra_provider"
+    const val HOST_ID = 1024
+}
+
+
+
+
+
 
 package your.pkg.widgets
 
