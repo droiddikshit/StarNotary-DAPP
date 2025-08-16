@@ -1,4 +1,59 @@
+package your.pkg.widgets
 
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.content.Context
+import android.util.AttributeSet
+import android.view.View
+
+/** RemoteViews needs framework widgets, not AppCompat wrappers */
+class NativeAppWidgetHostView(ctx: Context) : AppWidgetHostView(ctx) {
+    override fun onCreateView(context: Context?, name: String?, attrs: AttributeSet?): View? =
+        when (name) {
+            "ImageView"      -> android.widget.ImageView(context, attrs)
+            "TextView"       -> android.widget.TextView(context, attrs)
+            "ProgressBar"    -> android.widget.ProgressBar(context, attrs)
+            "LinearLayout"   -> android.widget.LinearLayout(context, attrs)
+            "RelativeLayout" -> android.widget.RelativeLayout(context, attrs)
+            else             -> super.onCreateView(context, name, attrs)
+        }
+}
+
+/** Host that returns our Native HostView */
+class NativeAppWidgetHost(ctx: Context, hostId: Int) : AppWidgetHost(ctx, hostId) {
+    override fun onCreateView(
+        context: Context?, appWidgetId: Int, info: android.appwidget.AppWidgetProviderInfo?
+    ): AppWidgetHostView = NativeAppWidgetHostView(context!!)
+}
+
+/** Process-wide single hostId reused across all pages (pager friendly) */
+object WidgetHost {
+    private const val HOST_ID = 1024
+    @Volatile private var _host: AppWidgetHost? = null
+    @Volatile private var _mgr: AppWidgetManager? = null
+
+    fun host(appCtx: Context): AppWidgetHost =
+        (_host ?: NativeAppWidgetHost(appCtx, HOST_ID)).also { _host = it }
+
+    fun mgr(appCtx: Context): AppWidgetManager =
+        (_mgr ?: AppWidgetManager.getInstance(appCtx)).also { _mgr = it }
+
+    fun start() { _host?.startListening() }
+    fun stop()  { _host?.stopListening()  }
+}
+
+
+
+
+
+
+
+
+
+
+
+------
 package your.pkg.widgets
 
 import android.appwidget.AppWidgetManager
