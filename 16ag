@@ -5,6 +5,184 @@ import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.view.ContextThemeWrapper
+
+object WidgetHostSingleton {
+    @Volatile private var host: AppWidgetHost? = null
+    @Volatile private var mgr: AppWidgetManager? = null
+
+    fun host(appCtx: Context): AppWidgetHost =
+        (host ?: object : AppWidgetHost(appCtx.applicationContext, WidgetContract.HOST_ID) {
+            override fun onCreateView(
+                context: Context,
+                appWidgetId: Int,
+                appWidget: AppWidgetProviderInfo
+            ): AppWidgetHostView {
+                // Framework theme so RemoteViews inflate framework widgets (no AppCompatImageView)
+                val native = ContextThemeWrapper(context.applicationContext, android.R.style.Theme_DeviceDefault)
+                return AppWidgetHostView(native)
+            }
+        }).also { host = it }
+
+    fun mgr(appCtx: Context): AppWidgetManager =
+        (mgr ?: AppWidgetManager.getInstance(appCtx.applicationContext)).also { mgr = it }
+
+    fun start(appCtx: Context) { host(appCtx).startListening() }
+    fun stop() { host?.stopListening() }
+}
+
+
+
+
+
+
+
+
+
+package your.pkg.widgets
+
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.graphics.Rect
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.TextView
+import com.samsung.android.homemode.ui.interfaces.Page
+import com.samsung.android.homemode.ui.pages.PageLayout
+
+/** Return this directly from PageFactory for Page.WidgetPage */
+class WidgetsLayout(
+    context: Context,
+    private val page: Page
+) : PageLayout(context, page) {
+
+    // ---- PageLayout abstract member(s)
+    override fun getSwipeToSAParameter(): String? = null
+
+    // ---- Shared host/manager (single hostId app-wide)
+    private val host: AppWidgetHost = WidgetHostSingleton.host(context)
+    private val mgr : AppWidgetManager = WidgetHostSingleton.mgr(context)
+
+    // ---- UI
+    private val canvas = FrameLayout(context)
+    private val addBtn = Button(context).apply { text = "Add Widget" }
+    private val deleteZone = ImageView(context).apply {
+        setImageResource(android.R.drawable.ic_menu_delete)
+        alpha = 0.85f; visibility = View.GONE
+        layoutParams = LayoutParams(400, 200, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+    }
+
+    // appWidgetIds placed on canvas (we must not delete them elsewhere)
+    private val keptIds = mutableSetOf<Int>()
+
+    init {
+        addView(canvas, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        val m = (16 * resources.displayMetrics.density).toInt()
+        addView(addBtn, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply {
+            setMargins(m, m, m, m)
+        })
+        addView(deleteZone)
+
+        addBtn.setOnClickListener { launchPicker() }
+    }
+
+    // ---------- Picker interop (Activity receives result, we route back here) ----------
+    companion object {
+        const val REQ_PICK = 1001
+        // the instance that launched the picker; Activity will call back into it
+        @JvmStatic internal var lastRequester: java.lang.ref.WeakReference<WidgetsLayout>? = null
+    }
+
+    private fun launchPicker() {
+        lastRequester = java.lang.ref.WeakReference(this)
+        findActivity(context)?.startActivityForResult(
+            Intent(context, WidgetPickerActivity::class.java),
+            REQ_PICK
+        )
+    }
+
+    /** Called by Activity onActivityResult */
+    fun handlePickerResult(data: Intent) {
+        val id = data.getIntExtra(WidgetContract.EXTRA_APPWIDGET_ID, -1)
+        val providerStr = data.getStringExtra(WidgetContract.EXTRA_PROVIDER) ?: return
+        val provider = ComponentName.unflattenFromString(providerStr) ?: return
+        if (id <= 0) return
+
+        keptIds.add(id)
+        val info = mgr.getAppWidgetInfo(id) ?: return
+
+        val hostView: AppWidgetHostView = host.createView(context, id, info).apply {
+            layoutParams = LayoutParams(info.minWidth.coerceAtLeast(400), info.minHeight.coerceAtLeast(400))
+            setAppWidget(id, info)
+        }
+
+        val box = FrameLayout(context).apply {
+            layoutParams = LayoutParams(hostView.layoutParams.width, hostView.layoutParams.height)
+            x = 320f; y = 160f
+            addView(hostView)
+            setOnTouchListener(drag(this, id))
+        }
+        canvas.addView(box)
+    }
+
+    private fun drag(box: View, id: Int): View.OnTouchListener {
+        var dx = 0f; var dy = 0f
+        return View.OnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { dx = box.x - e.rawX; dy = box.y - e.rawY; deleteZone.visibility = View.VISIBLE }
+                MotionEvent.ACTION_MOVE -> { box.x = e.rawX + dx; box.y = e.rawY + dy }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    deleteZone.visibility = View.GONE
+                    if (overDelete(box)) {
+                        (box.parent as ViewGroup).removeView(box)
+                        keptIds.remove(id)
+                        WidgetHostSingleton.host(context).deleteAppWidgetId(id)
+                    }
+                }
+            }
+            true
+        }
+    }
+
+    private fun overDelete(v: View): Boolean {
+        val a = IntArray(2); v.getLocationOnScreen(a)
+        val b = IntArray(2); deleteZone.getLocationOnScreen(b)
+        val ar = Rect(a[0], a[1], a[0] + v.width, a[1] + v.height)
+        val br = Rect(b[0], b[1], b[0] + deleteZone.width, b[1] + deleteZone.height)
+        return Rect.intersects(ar, br)
+    }
+
+    private fun findActivity(c: Context): android.app.Activity? =
+        generateSequence(c) { (it as? ContextWrapper)?.baseContext }
+            .filterIsInstance<android.app.Activity>().firstOrNull()
+}
+
+
+///////
+
+
+
+
+
+
+
+package your.pkg.widgets
+
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
