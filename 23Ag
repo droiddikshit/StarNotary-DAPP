@@ -1,1 +1,361 @@
+import android.appwidget.AppWidgetHost
+import android.content.Context
+
+object WidgetHostSingleton {
+    const val HOST_ID = 0x534C // any stable int
+
+    @Volatile private var host: AppWidgetHost? = null
+
+    fun get(context: Context): AppWidgetHost =
+        host ?: AppWidgetHost(context.applicationContext, HOST_ID).also { host = it }
+
+    fun start(context: Context) = get(context).startListening()
+    fun stop(context: Context)  = get(context).stopListening()
+}
+
+
+
+
+
+import android.content.Context
+import android.util.AttributeSet
+import android.widget.FrameLayout
+
+/** A simple container that can be inflated from XML. */
+class WidgetsLayout @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : FrameLayout(context, attrs, defStyleAttr)
+
+
+
+
+
+
+
+
+
+
+
+
+
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.util.DisplayMetrics
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.recyclerview.widget.RecyclerView
+import com.samsung.android.homemode.R
+
+class WidgetProviderAdapter(
+    private val context: Context,
+    private val providers: List<AppWidgetProviderInfo>,
+    private val onClick: (AppWidgetProviderInfo) -> Unit
+) : RecyclerView.Adapter<WidgetProviderAdapter.Holder>() {
+
+    private val dm: DisplayMetrics = context.resources.displayMetrics
+    private val awm: AppWidgetManager = AppWidgetManager.getInstance(context)
+
+    inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
+        val icon: ImageView = v.findViewById(R.id.icon)
+        val title: TextView = v.findViewById(R.id.title)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+        val v = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_widget_provider, parent, false)
+        return Holder(v)
+    }
+
+    override fun onBindViewHolder(h: Holder, position: Int) {
+        val info = providers[position]
+        val d = awm.loadPreview(info, dm.densityDpi)
+            ?: info.loadPreviewImage(context, dm.densityDpi)
+            ?: info.loadIcon(context, dm.densityDpi)
+        h.icon.setImageDrawable(d)
+        h.title.text = info.loadLabel(context.packageManager)
+        h.itemView.setOnClickListener { onClick(info) }
+    }
+
+    override fun getItemCount(): Int = providers.size
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.samsung.android.homemode.R
+import com.samsung.android.homemode.ui.interfaces.Page
+import com.samsung.android.homemode.ui.pages.base.PageLayout
+import com.samsung.android.homemode.ui.widgethost.WidgetHostSingleton
+import com.samsung.android.homemode.ui.widgetpicker.WidgetProviderAdapter
+
+@SuppressLint("ViewConstructor")
+class WidgetsPageLayout(
+    context: Context,
+    page: Page
+) : PageLayout(context, page) {
+
+    private val appWidgetManager = AppWidgetManager.getInstance(context)
+    private val appWidgetHost    = WidgetHostSingleton.get(context)
+
+    private lateinit var list: RecyclerView
+    private lateinit var container: FrameLayout
+
+    private val activity: ComponentActivity by lazy { requireActivity(context) }
+
+    private var pendingId   = AppWidgetManager.INVALID_APPWIDGET_ID
+    private var pendingInfo : AppWidgetProviderInfo? = null
+
+    private val bindLauncher: ActivityResultLauncher<Intent> =
+        activity.activityResultRegistry.register(
+            "${hashCode()}_bind", ActivityResultContracts.StartActivityForResult()
+        ) { r: ActivityResult ->
+            if (r.resultCode == Activity.RESULT_OK) launchConfigureIfNeeded() else cleanupId()
+        }
+
+    private val configLauncher: ActivityResultLauncher<Intent> =
+        activity.activityResultRegistry.register(
+            "${hashCode()}_cfg", ActivityResultContracts.StartActivityForResult()
+        ) { r: ActivityResult ->
+            if (r.resultCode == Activity.RESULT_OK) attachHostView() else cleanupId()
+        }
+
+    init {
+        inflate(context, R.layout.page_widgets, this)
+        list = findViewById(R.id.widget_list)
+        container = findViewById(R.id.widget_container)
+
+        list.layoutManager = GridLayoutManager(context, 3)
+        list.adapter = WidgetProviderAdapter(
+            context = context,
+            providers = appWidgetManager.getInstalledProvidersForProfile(android.os.Process.myUserHandle()),
+            onClick = { onProviderChosen(it) }
+        )
+
+        // good practice: start/stop with page lifetime
+        WidgetHostSingleton.start(context)
+        isFocusable = true
+        contentDescription = "Widgets"
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        WidgetHostSingleton.start(context)
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        WidgetHostSingleton.stop(context)
+        try { bindLauncher.unregister() } catch (_: Throwable) {}
+        try { configLauncher.unregister() } catch (_: Throwable) {}
+    }
+
+    // ----- PageLayout abstract requirements -----
+    override fun getSwipeToSAParameter(): String = ""            // fill if you log analytics
+    override fun getScreenIDSAParameter(): String = ""
+    override fun getShowEventIDSAParameter(): String = ""
+    override fun getContentLayout(): ViewGroup = this
+    override fun getSettingLayout(): ViewGroup = FrameLayout(context).apply { visibility = View.GONE }
+
+    // ----- Widget binding flow -----
+    private fun onProviderChosen(info: AppWidgetProviderInfo) {
+        pendingInfo = info
+        val id = newId()
+        val profile = info.profile ?: android.os.Process.myUserHandle()
+
+        val allowed = appWidgetManager.bindAppWidgetIdIfAllowed(id, profile, info.provider, null)
+        if (allowed) {
+            launchConfigureIfNeeded()
+        } else {
+            val i = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, profile)
+            }
+            bindLauncher.launch(i)
+        }
+    }
+
+    private fun launchConfigureIfNeeded() {
+        val info = pendingInfo ?: return cleanupId()
+        if (info.configure != null) {
+            val i = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+                component = info.configure as ComponentName
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingId)
+            }
+            configLauncher.launch(i)
+        } else {
+            attachHostView()
+        }
+    }
+
+    private fun attachHostView() {
+        val info = appWidgetManager.getAppWidgetInfo(pendingId) ?: return cleanupId()
+        val hostView: AppWidgetHostView = appWidgetHost.createView(context, pendingId, info)
+        hostView.setAppWidget(pendingId, info)
+
+        // show the hosted widget
+        list.visibility = View.GONE
+        container.visibility = View.VISIBLE
+        container.removeAllViews()
+        container.addView(hostView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        // keep the id if you want to restore later
+        pendingInfo = null
+    }
+
+    private fun newId(): Int {
+        if (pendingId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+            pendingId = appWidgetHost.allocateAppWidgetId()
+        }
+        return pendingId
+    }
+
+    private fun cleanupId() {
+        if (pendingId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            appWidgetHost.deleteAppWidgetId(pendingId)
+        }
+        pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+        pendingInfo = null
+    }
+
+    private fun requireActivity(ctx: Context): ComponentActivity {
+        var c = ctx
+        while (c is ContextWrapper) {
+            if (c is ComponentActivity) return c
+            c = c.baseContext
+        }
+        throw IllegalStateException("WidgetsPageLayout must be hosted in a ComponentActivity/AppCompatActivity")
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+res/layout/page_widgets.xml
+
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/page_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/widget_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="12dp"
+        android:clipToPadding="false" />
+
+    <FrameLayout
+        android:id="@+id/widget_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+</FrameLayout>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+res/layout/item_widget_provider.xml
+
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="88dp"
+    android:padding="12dp"
+    android:gravity="center_vertical">
+
+    <ImageView
+        android:id="@+id/icon"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:contentDescription="@null" />
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textSize="16sp" />
+</LinearLayout>
+
+
+
+
+
 
