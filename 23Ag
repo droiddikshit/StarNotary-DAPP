@@ -1,23 +1,10 @@
-dependencies {
-  implementation "androidx.appcompat:appcompat:1.7.0"
-  implementation "androidx.recyclerview:recyclerview:1.3.2"
-  implementation "androidx.activity:activity-ktx:1.9.2"
-  implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.8.4"
-  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
-}
-
-
-
-
-
-
-
+package your.pkg.widgets
 
 import android.appwidget.AppWidgetHost
 import android.content.Context
 
 object WidgetHost {
-    const val HOST_ID = 0x534C // stable arbitrary int
+    const val HOST_ID = 0x534C
     @Volatile private var host: AppWidgetHost? = null
 
     fun get(context: Context): AppWidgetHost =
@@ -34,24 +21,20 @@ object WidgetHost {
 
 
 
-
-
-
-
-
 package your.pkg.widgets
 
 import android.graphics.Bitmap
 import android.util.LruCache
 
 object PreviewCache {
-    // ~32MB cache
     private val cache = object : LruCache<String, Bitmap>(32 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
-    fun get(key: String): Bitmap? = cache.get(key)
-    fun put(key: String, bmp: Bitmap) { cache.put(key, bmp) }
+    fun get(key: String) = cache.get(key)
+    fun put(key: String, bmp: Bitmap) = cache.put(key, bmp)
 }
+
+
 
 
 
@@ -83,11 +66,6 @@ import kotlinx.coroutines.withContext
 import your.pkg.R
 import your.pkg.widgets.PreviewCache
 
-/**
- * Shows a grid of providers. Fast static previews (public API): previewImage → icon.
- * We keep it simple here (no live off-screen renders in the grid to avoid early prompts/jank).
- * On item click, we delegate to the page controller to actually bind and attach the widget.
- */
 class WidgetProviderAdapter(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
@@ -114,11 +92,9 @@ class WidgetProviderAdapter(
         h.title.text = info.loadLabel(context.packageManager)
         h.itemView.setOnClickListener { onClick(info) }
 
-        // cache key per provider
         val key = info.provider.flattenToShortString()
         PreviewCache.get(key)?.let { h.icon.setImageBitmap(it); return }
 
-        // Load static preview → fallback icon (off main thread)
         h.icon.setImageDrawable(null)
         h.job?.cancel()
         h.job = lifecycleOwner.lifecycle.coroutineScope.launch {
@@ -126,13 +102,11 @@ class WidgetProviderAdapter(
                 val d = info.loadPreviewImage(context, dm.densityDpi)
                     ?: info.loadIcon(context, dm.densityDpi)
                     ?: return@withContext null
-
                 val w = (d.intrinsicWidth.takeIf { it > 0 } ?: (96 * dm.density).toInt())
                 val hgt = (d.intrinsicHeight.takeIf { it > 0 } ?: (96 * dm.density).toInt())
                 android.graphics.Bitmap.createBitmap(w, hgt, android.graphics.Bitmap.Config.ARGB_8888).also {
                     val c = android.graphics.Canvas(it)
-                    d.setBounds(0, 0, w, hgt)
-                    d.draw(c)
+                    d.setBounds(0, 0, w, hgt); d.draw(c)
                 }
             }
             if (bmp != null && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
@@ -150,6 +124,13 @@ class WidgetProviderAdapter(
 
     override fun getItemCount(): Int = providers.size
 }
+
+
+
+
+
+
+
 
 
 
@@ -182,11 +163,12 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
 import your.pkg.R
 import your.pkg.widgets.WidgetHost
 import your.pkg.widgetpicker.WidgetProviderAdapter
 
-// If you already have these base types, keep using them. Otherwise these stubs compile.
+// Stubs if you already have these:
 interface Page
 abstract class PageLayout(ctx: Context, @Suppress("unused") val page: Page) : FrameLayout(ctx) {
     open fun getContentLayout(): ViewGroup = this
@@ -196,10 +178,6 @@ abstract class PageLayout(ctx: Context, @Suppress("unused") val page: Page) : Fr
     open fun getShowEventIDSAParameter(): String = ""
 }
 
-/**
- * This class owns the full "widget picker → bind → (configure?) → attach" flow.
- * Clicking a provider in the grid WILL add the widget to the container.
- */
 @SuppressLint("ViewConstructor")
 class WidgetsPageLayout(
     context: Context,
@@ -209,8 +187,10 @@ class WidgetsPageLayout(
     private val awm = AppWidgetManager.getInstance(context)
     private val host = WidgetHost.get(context)
 
-    private lateinit var grid: RecyclerView
-    private lateinit var container: FrameLayout
+    private lateinit var widgetContainer: FrameLayout        // where live widgets are attached
+    private lateinit var pickerPanel: View                   // overlay panel containing the grid
+    private lateinit var pickerGrid: RecyclerView            // grid of providers
+    private lateinit var addBtn: MaterialButton              // "Add Widget" button
 
     private val activity: ComponentActivity by lazy { requireActivity(context) }
 
@@ -221,31 +201,40 @@ class WidgetsPageLayout(
         activity.activityResultRegistry.register(
             "${hashCode()}_bind", ActivityResultContracts.StartActivityForResult()
         ) { r: ActivityResult ->
-            if (r.resultCode == Activity.RESULT_OK) launchConfigureIfNeeded() else cleanupId()
+            if (r.resultCode == Activity.RESULT_OK) launchConfigureIfNeeded() else cleanupIdAndClosePicker(false)
         }
 
     private val configLauncher: ActivityResultLauncher<Intent> =
         activity.activityResultRegistry.register(
             "${hashCode()}_cfg", ActivityResultContracts.StartActivityForResult()
         ) { r: ActivityResult ->
-            if (r.resultCode == Activity.RESULT_OK) attachHostView() else cleanupId()
+            if (r.resultCode == Activity.RESULT_OK) attachHostViewAndClosePicker()
+            else cleanupIdAndClosePicker(false)
         }
 
     init {
-        inflate(context, R.layout.page_widgets, this)
-        grid = findViewById(R.id.widget_list)
-        container = findViewById(R.id.widget_container)
+        inflate(context, R.layout.page_widgets_with_picker, this)
 
-        grid.layoutManager = GridLayoutManager(context, 3)
-        grid.adapter = WidgetProviderAdapter(
+        widgetContainer = findViewById(R.id.widget_container)
+        pickerPanel     = findViewById(R.id.picker_panel)
+        pickerGrid      = findViewById(R.id.widget_picker_grid)
+        addBtn          = findViewById(R.id.btn_add_widget)
+
+        // Grid setup
+        pickerGrid.layoutManager = GridLayoutManager(context, 3)
+        pickerGrid.adapter = WidgetProviderAdapter(
             context = context,
             lifecycleOwner = activity,
             providers = awm.getInstalledProvidersForProfile(android.os.Process.myUserHandle()),
             onClick = { info -> onProviderChosen(info) }
         )
 
-        // start listening while the page is visible
+        // Button opens the inline picker panel
+        addBtn.setOnClickListener { openPicker() }
+
+        // Start listening while page is visible
         WidgetHost.start(context)
+        showPicker(false) // start with picker hidden; show existing widgets (if any)
     }
 
     override fun onAttachedToWindow() {
@@ -260,7 +249,17 @@ class WidgetsPageLayout(
         runCatching { configLauncher.unregister() }
     }
 
-    // ---------- User clicked a widget in the grid ----------
+    // ---------- Picker visibility ----------
+    private fun openPicker()  = showPicker(true)
+    private fun closePicker() = showPicker(false)
+
+    private fun showPicker(show: Boolean) {
+        pickerPanel.visibility   = if (show) View.VISIBLE else View.GONE
+        // You can decide to dim/hide the container while picker is open; keep it visible here.
+        // widgetContainer.alpha = if (show) 0.3f else 1f
+    }
+
+    // ---------- User chooses a provider in the picker ----------
     private fun onProviderChosen(info: AppWidgetProviderInfo) {
         pendingInfo = info
         val id = ensureId()
@@ -275,39 +274,39 @@ class WidgetsPageLayout(
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, profile)
             }
-            bindLauncher.launch(i)
+            bindLauncher.launch(i) // system permission UI
         }
     }
 
     private fun launchConfigureIfNeeded() {
-        val info = pendingInfo ?: return cleanupId()
-        if (info.configure != null) {
+        val info = pendingInfo ?: return cleanupIdAndClosePicker(false)
+        val cfg = info.configure
+        if (cfg != null) {
             val i = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
-                component = info.configure as ComponentName
+                component = cfg as ComponentName
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingId)
             }
-            configLauncher.launch(i)
+            configLauncher.launch(i) // provider config activity
         } else {
-            attachHostView()
+            attachHostViewAndClosePicker()
         }
     }
 
-    private fun attachHostView() {
-        val info = awm.getAppWidgetInfo(pendingId) ?: return cleanupId()
-        val hv: AppWidgetHostView = host.createView(context, pendingId, info)
-        hv.setAppWidget(pendingId, info)
+    private fun attachHostViewAndClosePicker() {
+        val info = awm.getAppWidgetInfo(pendingId) ?: return cleanupIdAndClosePicker(false)
+        val hv: AppWidgetHostView = host.createView(context, pendingId, info).apply {
+            setAppWidget(pendingId, info)
+        }
 
-        // Show the actual widget; hide grid (you can keep both if you want multi-add)
-        grid.visibility = View.GONE
-        container.visibility = View.VISIBLE
-        container.removeAllViews()
-        container.addView(
-            hv,
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        // Add to pager page; here we append (support multiple widgets). Remove if single.
+        widgetContainer.addView(
+            hv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         )
 
-        // Keep the id for runtime (persist if you need restore across process death)
         pendingInfo = null
+        // Picker should close after successful add
+        closePicker()
+        // Keep the allocated id; persist if you want to restore across process death.
     }
 
     private fun ensureId(): Int {
@@ -317,12 +316,13 @@ class WidgetsPageLayout(
         return pendingId
     }
 
-    private fun cleanupId() {
+    private fun cleanupIdAndClosePicker(close: Boolean) {
         if (pendingId != AppWidgetManager.INVALID_APPWIDGET_ID) {
             host.deleteAppWidgetId(pendingId)
         }
         pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
         pendingInfo = null
+        if (close) closePicker()
     }
 
     private fun requireActivity(ctx: Context): ComponentActivity {
@@ -334,7 +334,7 @@ class WidgetsPageLayout(
         throw IllegalStateException("WidgetsPageLayout must be hosted in a ComponentActivity/AppCompatActivity")
     }
 
-    // ---- PageLayout integration points (no-ops, adjust if your base uses them) ----
+    // PageLayout hooks (leave if your base expects them)
     override fun getContentLayout(): ViewGroup = this
     override fun getSettingLayout(): ViewGroup = this
     override fun getSwipeToSAParameter(): String = ""
@@ -353,48 +353,87 @@ class WidgetsPageLayout(
 
 
 
-WidgetsPageLayout(context, page)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-res/layout/page_widgets.xml
-
-
 
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/page_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/widget_list"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:padding="12dp"
-        android:clipToPadding="false" />
-
+    <!-- Live widgets area (your pager page content) -->
     <FrameLayout
         android:id="@+id/widget_container"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:visibility="gone" />
+        android:paddingBottom="72dp" />
+
+    <!-- Add Widget button -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_add_widget"
+        style="@style/Widget.Material3.Button.FilledTonalButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Add Widget"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp" />
+
+    <!-- Inline picker panel (overlay) -->
+    <FrameLayout
+        android:id="@+id/picker_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#CC000000"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:background="@android:color/white">
+
+            <!-- Simple header row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="16dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Choose a widget"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/picker_close"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Close"
+                    android:textSize="16sp"
+                    android:padding="8dp" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/widget_picker_grid"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:padding="12dp"
+                android:clipToPadding="false" />
+        </LinearLayout>
+    </FrameLayout>
 </FrameLayout>
+
+
+res/layout/page_widgets_with_picker.xml
+
+
+
+
+
+
+
 
 
 
@@ -406,8 +445,6 @@ res/layout/page_widgets.xml
 
 
 res/layout/item_widget_provider.xml
-
-
 
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -431,9 +468,3 @@ res/layout/item_widget_provider.xml
         android:ellipsize="end"
         android:textSize="16sp" />
 </LinearLayout>
-
-
-
-
-
-
