@@ -1,9 +1,23 @@
+dependencies {
+  implementation "androidx.appcompat:appcompat:1.7.0"
+  implementation "androidx.recyclerview:recyclerview:1.3.2"
+  implementation "androidx.activity:activity-ktx:1.9.2"
+  implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.8.4"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+}
+
+
+
+
+
+
+
+
 import android.appwidget.AppWidgetHost
 import android.content.Context
 
-object WidgetHostSingleton {
-    const val HOST_ID = 0x534C // any stable int
-
+object WidgetHost {
+    const val HOST_ID = 0x534C // stable arbitrary int
     @Volatile private var host: AppWidgetHost? = null
 
     fun get(context: Context): AppWidgetHost =
@@ -17,16 +31,6 @@ object WidgetHostSingleton {
 
 
 
-import android.content.Context
-import android.util.AttributeSet
-import android.widget.FrameLayout
-
-/** A simple container that can be inflated from XML. */
-class WidgetsLayout @JvmOverloads constructor(
-    context: Context,
-    attrs: AttributeSet? = null,
-    defStyleAttr: Int = 0
-) : FrameLayout(context, attrs, defStyleAttr)
 
 
 
@@ -35,35 +39,68 @@ class WidgetsLayout @JvmOverloads constructor(
 
 
 
+package your.pkg.widgets
+
+import android.graphics.Bitmap
+import android.util.LruCache
+
+object PreviewCache {
+    // ~32MB cache
+    private val cache = object : LruCache<String, Bitmap>(32 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
+    fun get(key: String): Bitmap? = cache.get(key)
+    fun put(key: String, bmp: Bitmap) { cache.put(key, bmp) }
+}
 
 
 
 
 
-import android.appwidget.AppWidgetManager
+
+
+
+
+package your.pkg.widgetpicker
+
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.DisplayMetrics
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.coroutineScope
 import androidx.recyclerview.widget.RecyclerView
-import com.samsung.android.homemode.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import your.pkg.R
+import your.pkg.widgets.PreviewCache
 
+/**
+ * Shows a grid of providers. Fast static previews (public API): previewImage → icon.
+ * We keep it simple here (no live off-screen renders in the grid to avoid early prompts/jank).
+ * On item click, we delegate to the page controller to actually bind and attach the widget.
+ */
 class WidgetProviderAdapter(
     private val context: Context,
+    private val lifecycleOwner: LifecycleOwner,
     private val providers: List<AppWidgetProviderInfo>,
     private val onClick: (AppWidgetProviderInfo) -> Unit
 ) : RecyclerView.Adapter<WidgetProviderAdapter.Holder>() {
 
     private val dm: DisplayMetrics = context.resources.displayMetrics
-    private val awm: AppWidgetManager = AppWidgetManager.getInstance(context)
 
     inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
         val icon: ImageView = v.findViewById(R.id.icon)
         val title: TextView = v.findViewById(R.id.title)
+        var job: Job? = null
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
@@ -74,12 +111,41 @@ class WidgetProviderAdapter(
 
     override fun onBindViewHolder(h: Holder, position: Int) {
         val info = providers[position]
-        val d = awm.loadPreview(info, dm.densityDpi)
-            ?: info.loadPreviewImage(context, dm.densityDpi)
-            ?: info.loadIcon(context, dm.densityDpi)
-        h.icon.setImageDrawable(d)
         h.title.text = info.loadLabel(context.packageManager)
         h.itemView.setOnClickListener { onClick(info) }
+
+        // cache key per provider
+        val key = info.provider.flattenToShortString()
+        PreviewCache.get(key)?.let { h.icon.setImageBitmap(it); return }
+
+        // Load static preview → fallback icon (off main thread)
+        h.icon.setImageDrawable(null)
+        h.job?.cancel()
+        h.job = lifecycleOwner.lifecycle.coroutineScope.launch {
+            val bmp: Bitmap? = withContext(Dispatchers.Default) {
+                val d = info.loadPreviewImage(context, dm.densityDpi)
+                    ?: info.loadIcon(context, dm.densityDpi)
+                    ?: return@withContext null
+
+                val w = (d.intrinsicWidth.takeIf { it > 0 } ?: (96 * dm.density).toInt())
+                val hgt = (d.intrinsicHeight.takeIf { it > 0 } ?: (96 * dm.density).toInt())
+                android.graphics.Bitmap.createBitmap(w, hgt, android.graphics.Bitmap.Config.ARGB_8888).also {
+                    val c = android.graphics.Canvas(it)
+                    d.setBounds(0, 0, w, hgt)
+                    d.draw(c)
+                }
+            }
+            if (bmp != null && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                PreviewCache.put(key, bmp)
+                h.icon.setImageBitmap(bmp)
+            }
+        }
+    }
+
+    override fun onViewRecycled(holder: Holder) {
+        holder.job?.cancel()
+        holder.job = null
+        super.onViewRecycled(holder)
     }
 
     override fun getItemCount(): Int = providers.size
@@ -96,12 +162,7 @@ class WidgetProviderAdapter(
 
 
 
-
-
-
-
-
-
+package your.pkg.ui.pages
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -121,28 +182,40 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.samsung.android.homemode.R
-import com.samsung.android.homemode.ui.interfaces.Page
-import com.samsung.android.homemode.ui.pages.base.PageLayout
-import com.samsung.android.homemode.ui.widgethost.WidgetHostSingleton
-import com.samsung.android.homemode.ui.widgetpicker.WidgetProviderAdapter
+import your.pkg.R
+import your.pkg.widgets.WidgetHost
+import your.pkg.widgetpicker.WidgetProviderAdapter
 
+// If you already have these base types, keep using them. Otherwise these stubs compile.
+interface Page
+abstract class PageLayout(ctx: Context, @Suppress("unused") val page: Page) : FrameLayout(ctx) {
+    open fun getContentLayout(): ViewGroup = this
+    open fun getSettingLayout(): ViewGroup = this
+    open fun getSwipeToSAParameter(): String = ""
+    open fun getScreenIDSAParameter(): String = ""
+    open fun getShowEventIDSAParameter(): String = ""
+}
+
+/**
+ * This class owns the full "widget picker → bind → (configure?) → attach" flow.
+ * Clicking a provider in the grid WILL add the widget to the container.
+ */
 @SuppressLint("ViewConstructor")
 class WidgetsPageLayout(
     context: Context,
     page: Page
 ) : PageLayout(context, page) {
 
-    private val appWidgetManager = AppWidgetManager.getInstance(context)
-    private val appWidgetHost    = WidgetHostSingleton.get(context)
+    private val awm = AppWidgetManager.getInstance(context)
+    private val host = WidgetHost.get(context)
 
-    private lateinit var list: RecyclerView
+    private lateinit var grid: RecyclerView
     private lateinit var container: FrameLayout
 
     private val activity: ComponentActivity by lazy { requireActivity(context) }
 
-    private var pendingId   = AppWidgetManager.INVALID_APPWIDGET_ID
-    private var pendingInfo : AppWidgetProviderInfo? = null
+    private var pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+    private var pendingInfo: AppWidgetProviderInfo? = null
 
     private val bindLauncher: ActivityResultLauncher<Intent> =
         activity.activityResultRegistry.register(
@@ -160,48 +233,40 @@ class WidgetsPageLayout(
 
     init {
         inflate(context, R.layout.page_widgets, this)
-        list = findViewById(R.id.widget_list)
+        grid = findViewById(R.id.widget_list)
         container = findViewById(R.id.widget_container)
 
-        list.layoutManager = GridLayoutManager(context, 3)
-        list.adapter = WidgetProviderAdapter(
+        grid.layoutManager = GridLayoutManager(context, 3)
+        grid.adapter = WidgetProviderAdapter(
             context = context,
-            providers = appWidgetManager.getInstalledProvidersForProfile(android.os.Process.myUserHandle()),
-            onClick = { onProviderChosen(it) }
+            lifecycleOwner = activity,
+            providers = awm.getInstalledProvidersForProfile(android.os.Process.myUserHandle()),
+            onClick = { info -> onProviderChosen(info) }
         )
 
-        // good practice: start/stop with page lifetime
-        WidgetHostSingleton.start(context)
-        isFocusable = true
-        contentDescription = "Widgets"
+        // start listening while the page is visible
+        WidgetHost.start(context)
     }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        WidgetHostSingleton.start(context)
+        WidgetHost.start(context)
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
-        WidgetHostSingleton.stop(context)
-        try { bindLauncher.unregister() } catch (_: Throwable) {}
-        try { configLauncher.unregister() } catch (_: Throwable) {}
+        WidgetHost.stop(context)
+        runCatching { bindLauncher.unregister() }
+        runCatching { configLauncher.unregister() }
     }
 
-    // ----- PageLayout abstract requirements -----
-    override fun getSwipeToSAParameter(): String = ""            // fill if you log analytics
-    override fun getScreenIDSAParameter(): String = ""
-    override fun getShowEventIDSAParameter(): String = ""
-    override fun getContentLayout(): ViewGroup = this
-    override fun getSettingLayout(): ViewGroup = FrameLayout(context).apply { visibility = View.GONE }
-
-    // ----- Widget binding flow -----
+    // ---------- User clicked a widget in the grid ----------
     private fun onProviderChosen(info: AppWidgetProviderInfo) {
         pendingInfo = info
-        val id = newId()
+        val id = ensureId()
         val profile = info.profile ?: android.os.Process.myUserHandle()
 
-        val allowed = appWidgetManager.bindAppWidgetIdIfAllowed(id, profile, info.provider, null)
+        val allowed = awm.bindAppWidgetIdIfAllowed(id, profile, info.provider, null)
         if (allowed) {
             launchConfigureIfNeeded()
         } else {
@@ -228,30 +293,33 @@ class WidgetsPageLayout(
     }
 
     private fun attachHostView() {
-        val info = appWidgetManager.getAppWidgetInfo(pendingId) ?: return cleanupId()
-        val hostView: AppWidgetHostView = appWidgetHost.createView(context, pendingId, info)
-        hostView.setAppWidget(pendingId, info)
+        val info = awm.getAppWidgetInfo(pendingId) ?: return cleanupId()
+        val hv: AppWidgetHostView = host.createView(context, pendingId, info)
+        hv.setAppWidget(pendingId, info)
 
-        // show the hosted widget
-        list.visibility = View.GONE
+        // Show the actual widget; hide grid (you can keep both if you want multi-add)
+        grid.visibility = View.GONE
         container.visibility = View.VISIBLE
         container.removeAllViews()
-        container.addView(hostView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        container.addView(
+            hv,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        )
 
-        // keep the id if you want to restore later
+        // Keep the id for runtime (persist if you need restore across process death)
         pendingInfo = null
     }
 
-    private fun newId(): Int {
+    private fun ensureId(): Int {
         if (pendingId == AppWidgetManager.INVALID_APPWIDGET_ID) {
-            pendingId = appWidgetHost.allocateAppWidgetId()
+            pendingId = host.allocateAppWidgetId()
         }
         return pendingId
     }
 
     private fun cleanupId() {
         if (pendingId != AppWidgetManager.INVALID_APPWIDGET_ID) {
-            appWidgetHost.deleteAppWidgetId(pendingId)
+            host.deleteAppWidgetId(pendingId)
         }
         pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
         pendingInfo = null
@@ -265,7 +333,29 @@ class WidgetsPageLayout(
         }
         throw IllegalStateException("WidgetsPageLayout must be hosted in a ComponentActivity/AppCompatActivity")
     }
+
+    // ---- PageLayout integration points (no-ops, adjust if your base uses them) ----
+    override fun getContentLayout(): ViewGroup = this
+    override fun getSettingLayout(): ViewGroup = this
+    override fun getSwipeToSAParameter(): String = ""
+    override fun getScreenIDSAParameter(): String = ""
+    override fun getShowEventIDSAParameter(): String = ""
 }
+
+
+
+
+
+
+
+
+
+
+
+
+WidgetsPageLayout(context, page)
+
+
 
 
 
@@ -284,6 +374,8 @@ class WidgetsPageLayout(
 
 
 res/layout/page_widgets.xml
+
+
 
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/page_root"
@@ -313,23 +405,9 @@ res/layout/page_widgets.xml
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 res/layout/item_widget_provider.xml
+
+
 
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
