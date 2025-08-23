@@ -1,0 +1,11 @@
+package your.pkg.widgets
+
+object WidgetContract {
+    const val HOST_ID = 1024
+    const val EXTRA_APPWIDGET_ID = "extra_appwidget_id"
+}
+
+
+
+
+
