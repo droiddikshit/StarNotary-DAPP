@@ -1,0 +1,529 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+app/src/main/res/layout/item_widget_provider.xml
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="88dp"
+    android:padding="12dp"
+    android:gravity="center_vertical">
+
+    <ImageView
+        android:id="@+id/icon"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:scaleType="fitCenter"
+        android:contentDescription="@null" />
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:layout_weight="1"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textSize="16sp" />
+</LinearLayout>
+
+
+
+
+
+
+
+
+
+
+
+
+
+src/main/res/layout/page_widgets_with_picker.xml
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/page_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- Placed widgets stack (scrollable vertical) -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:id="@+id/widget_container"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="12dp" />
+    </ScrollView>
+
+    <!-- Add Widget button -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_add_widget"
+        style="@style/Widget.Material3.Button.FilledTonalButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Add Widget"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp" />
+
+    <!-- Picker overlay -->
+    <FrameLayout
+        android:id="@+id/picker_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#CC000000"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:background="@android:color/white">
+
+            <!-- Header -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="8dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Choose a widget"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/picker_close"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Close"
+                    android:textSize="16sp"
+                    android:padding="8dp" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/widget_picker_grid"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:padding="12dp"
+                android:clipToPadding="false" />
+        </LinearLayout>
+    </FrameLayout>
+</FrameLayout>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.button.MaterialButton
+import com.samsung.android.homemode.R
+import com.samsung.android.homemode.ui.interfaces.Page
+import com.samsung.android.homemode.ui.pages.PageLayout
+import com.samsung.android.homemode.ui.widgethost.WidgetHostSingleton
+import com.samsung.android.homemode.ui.widgetpicker.WidgetProviderAdapter
+
+@SuppressLint("ViewConstructor")
+class WidgetsPageLayout(
+    context: Context,
+    page: Page
+) : PageLayout(context, page) {
+
+    private val awm = AppWidgetManager.getInstance(context)
+    private val host = WidgetHostSingleton.get(context)
+
+    private lateinit var widgetContainer: ViewGroup      // where live widgets are added
+    private lateinit var pickerPanel: View               // overlay panel with grid
+    private lateinit var pickerGrid: RecyclerView
+    private lateinit var addBtn: MaterialButton
+
+    private val activity: ComponentActivity by lazy { requireActivity(context) }
+
+    private var pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+    private var pendingInfo: AppWidgetProviderInfo? = null
+
+    private val bindLauncher: ActivityResultLauncher<Intent> =
+        activity.activityResultRegistry.register(
+            "${hashCode()}_bind", ActivityResultContracts.StartActivityForResult()
+        ) { r: ActivityResult ->
+            if (r.resultCode == Activity.RESULT_OK) launchConfigureIfNeeded()
+            else cleanupIdAndClosePicker(close = true)
+        }
+
+    private val configLauncher: ActivityResultLauncher<Intent> =
+        activity.activityResultRegistry.register(
+            "${hashCode()}_cfg", ActivityResultContracts.StartActivityForResult()
+        ) { r: ActivityResult ->
+            if (r.resultCode == Activity.RESULT_OK) attachHostViewAndClosePicker()
+            else cleanupIdAndClosePicker(close = true)
+        }
+
+    init {
+        inflate(context, R.layout.page_widgets_with_picker, this)
+
+        widgetContainer = findViewById(R.id.widget_container)
+        pickerPanel     = findViewById(R.id.picker_panel)
+        pickerGrid      = findViewById(R.id.widget_picker_grid)
+        addBtn          = findViewById(R.id.btn_add_widget)
+
+        pickerGrid.layoutManager = GridLayoutManager(context, 3)
+        pickerGrid.adapter = WidgetProviderAdapter(
+            context = context,
+            lifecycleOwner = activity,
+            providers = awm.getInstalledProvidersForProfile(android.os.Process.myUserHandle()),
+            onClick = { info -> onProviderChosen(info) }
+        )
+
+        addBtn.setOnClickListener { openPicker() }
+        findViewById<View>(R.id.picker_close)?.setOnClickListener { closePicker() }
+
+        WidgetHostSingleton.start(context)
+        showPicker(false)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        WidgetHostSingleton.start(context)
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        WidgetHostSingleton.stop(context)
+        runCatching { bindLauncher.unregister() }
+        runCatching { configLauncher.unregister() }
+    }
+
+    // ---------- Picker visibility ----------
+    private fun openPicker()  = showPicker(true)
+    private fun closePicker() = showPicker(false)
+
+    private fun showPicker(show: Boolean) {
+        pickerPanel.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    // ---------- Clicked a provider in the picker ----------
+    private fun onProviderChosen(info: AppWidgetProviderInfo) {
+        pendingInfo = info
+        val id = ensureId()
+        val profile = info.profile ?: android.os.Process.myUserHandle()
+
+        val bound = awm.bindAppWidgetIdIfAllowed(id, profile, info.provider, null)
+        if (bound) {
+            launchConfigureIfNeeded()
+        } else {
+            val i = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, profile)
+            }
+            bindLauncher.launch(i)
+        }
+    }
+
+    private fun canLaunchConfig(info: AppWidgetProviderInfo): Boolean {
+        val cfg = info.configure ?: return false
+        return try {
+            val ai = context.packageManager.getActivityInfo(cfg, 0)
+            val neededPerm = ai.permission
+            val hasPerm = neededPerm.isNullOrEmpty() ||
+                context.packageManager.checkPermission(neededPerm, context.packageName)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED
+            ai.exported && hasPerm
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun launchConfigureIfNeeded() {
+        val info = pendingInfo ?: return cleanupIdAndClosePicker(true)
+
+        if (info.configure == null || !canLaunchConfig(info)) {
+            // OEM/private or no config → attach with defaults
+            attachHostViewAndClosePicker()
+            return
+        }
+
+        val i = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+            component = info.configure as ComponentName
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingId)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            configLauncher.launch(i)
+        } catch (_: SecurityException) {
+            attachHostViewAndClosePicker()
+        }
+    }
+
+    private fun attachHostViewAndClosePicker() {
+        val info = awm.getAppWidgetInfo(pendingId)
+        if (info == null || pendingInfo?.provider != info.provider) {
+            cleanupIdAndClosePicker(true)
+            return
+        }
+
+        val hostView: AppWidgetHostView = host.createView(context, pendingId, info).apply {
+            setAppWidget(pendingId, info)
+            // Optional: seed an initial size bucket (dp) if you want deterministic height:
+            // updateAppWidgetSize(Bundle().apply {
+            //   putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,  maxOf(info.minWidth,  200))
+            //   putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, maxOf(info.minHeight, 120))
+            //   putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH,  maxOf(info.minWidth,  200))
+            //   putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, maxOf(info.minHeight, 120))
+            // })
+        }
+
+        // Append (multiple widgets). If you want single-widget page, call removeAllViews() first.
+        widgetContainer.addView(
+            hostView,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        )
+
+        pendingInfo = null
+        closePicker()
+    }
+
+    private fun ensureId(): Int {
+        if (pendingId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+            pendingId = host.allocateAppWidgetId()
+        }
+        return pendingId
+    }
+
+    private fun cleanupIdAndClosePicker(close: Boolean) {
+        if (pendingId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            host.deleteAppWidgetId(pendingId)
+        }
+        pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+        pendingInfo = null
+        if (close) closePicker()
+    }
+
+    private fun requireActivity(ctx: Context): ComponentActivity {
+        var c = ctx
+        while (c is ContextWrapper) {
+            if (c is ComponentActivity) return c
+            c = c.baseContext
+        }
+        throw IllegalStateException("WidgetsPageLayout must be hosted in a ComponentActivity/AppCompatActivity")
+    }
+
+    // --- PageLayout hooks (kept empty; your base may read them) ---
+    override fun getContentLayout(): ViewGroup = this
+    override fun getSettingLayout(): ViewGroup = this
+    override fun getSwipeToSAParameter(): String = ""
+    override fun getScreenIDSAParameter(): String = ""
+    override fun getShowEventIDSAParameter(): String = ""
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import android.appwidget.AppWidgetProviderInfo
+import android.content.Context
+import android.graphics.Bitmap
+import android.util.DisplayMetrics
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.coroutineScope
+import androidx.recyclerview.widget.RecyclerView
+import com.samsung.android.homemode.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class WidgetProviderAdapter(
+    private val context: Context,
+    private val lifecycleOwner: LifecycleOwner,
+    private val providers: List<AppWidgetProviderInfo>,
+    private val onClick: (AppWidgetProviderInfo) -> Unit
+) : RecyclerView.Adapter<WidgetProviderAdapter.Holder>() {
+
+    private val dm: DisplayMetrics = context.resources.displayMetrics
+
+    inner class Holder(v: View) : RecyclerView.ViewHolder(v) {
+        val icon: ImageView = v.findViewById(R.id.icon)
+        val title: TextView = v.findViewById(R.id.title)
+        var job: Job? = null
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+        val v = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_widget_provider, parent, false)
+        return Holder(v)
+    }
+
+    override fun onBindViewHolder(h: Holder, position: Int) {
+        val info = providers[position]
+        h.title.text = info.loadLabel(context.packageManager)
+        h.itemView.setOnClickListener { onClick(info) }
+
+        val key = info.provider.flattenToShortString()
+        PreviewCache.get(key)?.let { h.icon.setImageBitmap(it); return }
+
+        h.icon.setImageDrawable(null)
+        h.job?.cancel()
+        h.job = lifecycleOwner.lifecycle.coroutineScope.launch {
+            val bmp: Bitmap? = withContext(Dispatchers.Default) {
+                val d = info.loadPreviewImage(context, dm.densityDpi)
+                    ?: info.loadIcon(context, dm.densityDpi)
+                    ?: return@withContext null
+
+                val w = (d.intrinsicWidth.takeIf { it > 0 } ?: (96 * dm.density).toInt())
+                val hgt = (d.intrinsicHeight.takeIf { it > 0 } ?: (96 * dm.density).toInt())
+                android.graphics.Bitmap.createBitmap(w, hgt, android.graphics.Bitmap.Config.ARGB_8888).also {
+                    val c = android.graphics.Canvas(it)
+                    d.setBounds(0, 0, w, hgt)
+                    d.draw(c)
+                }
+            }
+            if (bmp != null && lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                PreviewCache.put(key, bmp)
+                h.icon.setImageBitmap(bmp)
+            }
+        }
+    }
+
+    override fun onViewRecycled(holder: Holder) {
+        holder.job?.cancel()
+        holder.job = null
+        super.onViewRecycled(holder)
+    }
+
+    override fun getItemCount(): Int = providers.size
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import android.graphics.Bitmap
+import android.util.LruCache
+
+object PreviewCache {
+    private val cache = object : LruCache<String, Bitmap>(32 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
+    fun get(key: String) = cache.get(key)
+    fun put(key: String, bmp: Bitmap) = cache.put(key, bmp)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import android.appwidget.AppWidgetHost
+import android.content.Context
+
+object WidgetHostSingleton {
+    const val HOST_ID = 0x534C // any stable int
+
+    @Volatile private var host: AppWidgetHost? = null
+
+    fun get(context: Context): AppWidgetHost =
+        host ?: AppWidgetHost(context.applicationContext, HOST_ID).also { host = it }
+
+    fun start(context: Context) = get(context).startListening()
+    fun stop(context: Context)  = get(context).stopListening()
+}
