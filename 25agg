@@ -1,3 +1,29 @@
+private fun restorePlacedWidgets() {
+    placed.clear()
+    placed += PlacedWidgetsStore.load(context)
+    for (w in placed) {
+        val info = awm.getAppWidgetInfo(w.id) ?: continue
+        val hv = host.createView(context, w.id, info).apply {
+            setAppWidget(w.id, info)
+        }
+        widgetContainer.addView(hv,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 private fun attachHostViewAndClosePicker() {
     val info = awm.getAppWidgetInfo(pendingId)
     if (info == null || pendingInfo?.provider != info.provider) {
