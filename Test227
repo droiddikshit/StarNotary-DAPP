@@ -1,3 +1,305 @@
+
+package com.samsung.android.homemode.ui.pages
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.appwidget.AppWidgetHostView
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProviderInfo
+import android.content.ComponentName
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResult
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.samsung.android.homemode.R
+import com.samsung.android.homemode.ui.interfaces.Page
+import com.samsung.android.homemode.ui.pages.PageLayout
+import com.samsung.android.homemode.ui.widgethost.PlacedWidget
+import com.samsung.android.homemode.ui.widgethost.PlacedWidgetsStore
+import com.samsung.android.homemode.ui.widgethost.WidgetHostSingleton
+import com.samsung.android.homemode.ui.widgetpicker.WidgetProviderAdapter
+
+@SuppressLint("ViewConstructor")
+class WidgetsPageLayout(
+    context: Context,
+    page: Page
+) : PageLayout(context, page) {
+
+    companion object { private const val TAG = "WidgetsPage" }
+
+    private val awm = AppWidgetManager.getInstance(context)
+    private val host = WidgetHostSingleton.get(context)
+
+    // NOTE: keep this as View to avoid class-cast issues if you swap Button/MaterialButton in XML
+    private lateinit var addBtn: View
+    private lateinit var widgetContainer: ViewGroup
+    private lateinit var pickerPanel: View
+    private lateinit var pickerGrid: RecyclerView
+
+    private val activity: ComponentActivity by lazy { requireActivity(context) }
+
+    private var pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+    private var pendingInfo: AppWidgetProviderInfo? = null
+
+    private val placed = mutableListOf<PlacedWidget>()
+
+    private val bindLauncher: ActivityResultLauncher<Intent> =
+        activity.activityResultRegistry.register(
+            "${hashCode()}_bind", ActivityResultContracts.StartActivityForResult()
+        ) { r: ActivityResult ->
+            if (r.resultCode == Activity.RESULT_OK) launchConfigureIfNeeded()
+            else cleanupIdAndClosePicker(close = true)
+        }
+
+    private val configLauncher: ActivityResultLauncher<Intent> =
+        activity.activityResultRegistry.register(
+            "${hashCode()}_cfg", ActivityResultContracts.StartActivityForResult()
+        ) { r: ActivityResult ->
+            if (r.resultCode == Activity.RESULT_OK) attachHostViewAndClosePicker()
+            else cleanupIdAndClosePicker(close = true)
+        }
+
+    init {
+        inflate(context, R.layout.page_widgets_with_picker, this)
+
+        widgetContainer = findViewById(R.id.widget_container)
+        pickerPanel     = findViewById(R.id.picker_panel)
+        pickerGrid      = findViewById(R.id.widget_picker_grid)
+        addBtn          = findViewById(R.id.btn_add_widget)
+
+        pickerGrid.layoutManager = GridLayoutManager(context, 3)
+        pickerGrid.adapter = WidgetProviderAdapter(
+            context = context,
+            lifecycleOwner = activity,
+            providers = awm.getInstalledProvidersForProfile(android.os.Process.myUserHandle()),
+            onClick = { info -> onProviderChosen(info) }
+        )
+
+        addBtn.setOnClickListener { openPicker() }
+        findViewById<View>(R.id.picker_close)?.setOnClickListener { closePicker() }
+
+        WidgetHostSingleton.start(context)
+        restorePlacedWidgets()
+        showPicker(false)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        WidgetHostSingleton.start(context)
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        WidgetHostSingleton.stop(context)
+        runCatching { bindLauncher.unregister() }
+        runCatching { configLauncher.unregister() }
+    }
+
+    // ---------------- Picker visibility ----------------
+
+    private fun openPicker()  = showPicker(true)
+    private fun closePicker() = showPicker(false)
+
+    private fun showPicker(show: Boolean) {
+        pickerPanel.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    // ---------------- Restore previously placed widgets ----------------
+
+    private fun restorePlacedWidgets() {
+        placed.clear()
+        placed += PlacedWidgetsStore.load(context)
+        if (placed.isEmpty()) return
+
+        for (w in placed) {
+            val info = awm.getAppWidgetInfo(w.id) ?: continue
+            if (info.provider != w.provider) continue
+
+            val hv = host.createView(context, w.id, info).apply {
+                setAppWidget(w.id, info)
+            }
+            // IMPORTANT: re-apply options on restore so providers don't self-remove
+            awm.updateAppWidgetOptions(w.id, buildOptionsFor(info))
+
+            widgetContainer.addView(
+                hv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            )
+        }
+    }
+
+    // ---------------- Helpers for options ----------------
+
+    private fun pxToDp(px: Int) = (px / resources.displayMetrics.density).toInt()
+
+    /**
+     * Build an OPTIONS bundle matching the provider’s declared categories.
+     * Samsung frameworks expose HOME as WIDGET_CATEGORY_HOME_SCREEN and SEARCH as WIDGET_CATEGORY_SEARCHBOX.
+     */
+    private fun buildOptionsFor(info: AppWidgetProviderInfo): Bundle {
+        val rootWpx = (widgetContainer.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels)
+        val wDp = pxToDp(rootWpx)
+        val hDp = maxOf(info.minHeight, 120)
+
+        // Determine the proper host category. If the widget supports SEARCHBOX, prefer that.
+        val widgetCats = info.widgetCategory // bitmask on Samsung
+        val hostCat =
+            if ((widgetCats and AppWidgetProviderInfo.WIDGET_CATEGORY_SEARCHBOX) != 0)
+                AppWidgetProviderInfo.WIDGET_CATEGORY_SEARCHBOX
+            else
+                AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN
+
+        return Bundle().apply {
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH,  maxOf(info.minWidth,  wDp))
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, maxOf(info.minHeight, hDp))
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH,  maxOf(info.minWidth,  wDp))
+            putInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, maxOf(info.minHeight, hDp))
+            putInt(AppWidgetManager.OPTION_APPWIDGET_HOST_CATEGORY, hostCat)
+        }
+    }
+
+    // ---------------- User picked a provider ----------------
+
+    private fun onProviderChosen(info: AppWidgetProviderInfo) {
+        android.util.Log.d(TAG, "onProviderChosen: ${info.provider.flattenToShortString()}")
+        pendingInfo = info
+        // fresh id per add
+        pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+        val id = ensureId()
+        val profile = info.profile ?: android.os.Process.myUserHandle()
+        val opts = buildOptionsFor(info)
+
+        val bound = awm.bindAppWidgetIdIfAllowed(id, profile, info.provider, opts)
+        android.util.Log.d(TAG, "bindAppWidgetIdIfAllowed -> $bound, id=$id")
+
+        if (bound) {
+            launchConfigureIfNeeded()
+        } else {
+            val i = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND).apply {
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, info.provider)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER_PROFILE, profile)
+                putExtra(AppWidgetManager.EXTRA_APPWIDGET_OPTIONS, opts)
+            }
+            bindLauncher.launch(i)
+        }
+    }
+
+    private fun canLaunchConfig(info: AppWidgetProviderInfo): Boolean {
+        val cfg = info.configure ?: return false
+        return try {
+            val ai = context.packageManager.getActivityInfo(cfg, 0)
+            val neededPerm = ai.permission
+            val hasPerm = neededPerm.isNullOrEmpty() ||
+                context.packageManager.checkPermission(neededPerm, context.packageName) ==
+                PackageManager.PERMISSION_GRANTED
+            ai.exported && hasPerm
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun launchConfigureIfNeeded() {
+        val info = pendingInfo ?: return cleanupIdAndClosePicker(true)
+
+        if (info.configure == null || !canLaunchConfig(info)) {
+            attachHostViewAndClosePicker(); return
+        }
+
+        val i = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+            component = info.configure as ComponentName
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, pendingId)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            configLauncher.launch(i)
+        } catch (_: SecurityException) {
+            attachHostViewAndClosePicker()
+        }
+    }
+
+    private fun attachHostViewAndClosePicker() {
+        val info = awm.getAppWidgetInfo(pendingId)
+        if (info == null || pendingInfo?.provider != info.provider) {
+            android.util.Log.w(TAG, "attach: invalid id/provider; cleanup")
+            cleanupIdAndClosePicker(true)
+            return
+        }
+
+        val hv: AppWidgetHostView = host.createView(context, pendingId, info).apply {
+            setAppWidget(pendingId, info)
+        }
+
+        // Re-apply options after attach; some providers recheck here.
+        awm.updateAppWidgetOptions(pendingId, buildOptionsFor(info))
+
+        widgetContainer.addView(
+            hv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        )
+
+        // Persist id (do NOT delete on success)
+        placed += PlacedWidget(pendingId, info.provider)
+        PlacedWidgetsStore.save(context, placed)
+
+        pendingInfo = null
+        pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+        closePicker()
+    }
+
+    private fun ensureId(): Int {
+        if (pendingId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+            pendingId = host.allocateAppWidgetId()
+        }
+        return pendingId
+    }
+
+    private fun cleanupIdAndClosePicker(close: Boolean) {
+        if (pendingId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            // Only delete on failure/cancel
+            host.deleteAppWidgetId(pendingId)
+        }
+        pendingId = AppWidgetManager.INVALID_APPWIDGET_ID
+        pendingInfo = null
+        if (close) closePicker()
+    }
+
+    private fun requireActivity(ctx: Context): ComponentActivity {
+        var c = ctx
+        while (c is ContextWrapper) {
+            if (c is ComponentActivity) return c
+            c = c.baseContext
+        }
+        throw IllegalStateException("WidgetsPageLayout must be hosted in a ComponentActivity/AppCompatActivity")
+    }
+
+    // ---- Base PageLayout hooks (leave as-is for your project) ----
+    override fun getContentLayout(): ViewGroup = this
+    override fun getSettingLayout(): ViewGroup = this
+    override fun getSwipeToSAParameter(): String = ""
+    override fun getScreenIDSAParameter(): String = ""
+    override fun getShowEventIDSAParameter(): String = ""
+}
+
+
+
+
+
+
+
+
+
+
+
+
 <resources>
     <string name="add_widget">Add Widget</string>
     <string name="close_picker">Close</string>
