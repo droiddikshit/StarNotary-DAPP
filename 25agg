@@ -1,3 +1,35 @@
+private fun attachHostViewAndClosePicker() {
+    val info = awm.getAppWidgetInfo(pendingId)
+    if (info == null || pendingInfo?.provider != info.provider) {
+        cleanupIdAndClosePicker(true)   // failure
+        return
+    }
+
+    val hv = host.createView(context, pendingId, info).apply {
+        setAppWidget(pendingId, info)
+    }
+    widgetContainer.addView(hv,
+        LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+    // ✅ Save the id permanently
+    placed += PlacedWidget(pendingId, info.provider)
+    PlacedWidgetsStore.save(context, placed)
+
+    // Do NOT delete and do NOT reset the id here
+    pendingInfo = null
+
+    closePicker()
+}
+
+
+
+
+
+
+
+
+
+
 
 app/src/main/res/layout/item_widget_provider.xml
 
