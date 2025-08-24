@@ -1,4 +1,23 @@
+import android.content.pm.PackageManager
+import android.appwidget.AppWidgetProviderInfo
 
+private fun canLaunchConfig(info: AppWidgetProviderInfo): Boolean {
+    val cfg = info.configure ?: return false
+    return try {
+        val ai = context.packageManager.getActivityInfo(cfg, 0)
+
+        // If the config activity requires a permission, verify we have it.
+        val neededPerm = ai.permission
+        val hasPerm = neededPerm.isNullOrEmpty() ||
+            context.packageManager.checkPermission(neededPerm, context.packageName) == PackageManager.PERMISSION_GRANTED
+            // Alternatively:
+            // ContextCompat.checkSelfPermission(context, neededPerm) == PackageManager.PERMISSION_GRANTED
+
+        ai.exported && hasPerm
+    } catch (_: Exception) {
+        false
+    }
+}
 
 
 
