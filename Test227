@@ -1,6 +1,4 @@
 
-package com.samsung.android.homemode.ui.pages
-
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.appwidget.AppWidgetHostView
