@@ -1,3 +1,37 @@
+class  : Application(), DefaultLifecycleObserver {
+
+    private val eventReceivers: MutableList<EventReceiver> = ArrayList()
+
+    override fun onCreate() {
+        super<Application>.onCreate()   // <-- disambiguate here
+        Log.i("HomeModeApp", "onCreate()")
+
+        // register lifecycle observer so start/stop listening works
+        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+
+        // (your own event receivers)
+        eventReceivers.forEach {
+            it.register(context = this)
+        }
+    }
+
+    // Called when app goes to foreground
+    override fun onStart(owner: LifecycleOwner) {
+        WidgetHostSingleton.start(this)
+    }
+
+    // Called when app goes to background
+    override fun onStop(owner: LifecycleOwner) {
+        WidgetHostSingleton.stop(this)
+    }
+}
+
+
+
+
+
+
+
 
 import android.app.Application
 import androidx.lifecycle.DefaultLifecycleObserver
