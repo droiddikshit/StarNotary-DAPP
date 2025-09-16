@@ -17,3 +17,491 @@ allprojects {
         flatDir { dirs 'libs' } // to load Knox jar/aar
     }
 }
+
+
+
+
+
+
+
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace "com.example.knoxsample"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.knoxsample"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+    implementation fileTree(dir: "libs", include: ["*.jar", "*.aar"])
+}
+
+
+
+
+
+
+
+
+
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.knoxsample">
+
+    <uses-permission android:name="android.permission.BIND_DEVICE_ADMIN" />
+
+    <!-- Knox permissions -->
+    <uses-permission android:name="com.samsung.android.knox.permission.KNOX_APP_MGMT" />
+    <uses-permission android:name="com.samsung.android.knox.permission.SUPPORT_PERMISSION" />
+    <uses-permission android:name="com.samsung.android.knox.permission.KNOX_LOCKSCREEN" />
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+
+        <!-- Device Admin -->
+        <receiver
+            android:name=".MyDeviceAdminReceiver"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:label="@string/app_name">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_meta" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Knox license receiver -->
+        <receiver android:name=".SampleLicenseReceiver">
+            <intent-filter>
+                <action android:name="com.samsung.android.knox.intent.action.KNOX_LICENSE_STATUS" />
+                <action android:name="com.samsung.android.knox.intent.action.LICENSE_STATUS" />
+            </intent-filter>
+        </receiver>
+
+        <activity android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>
+
+
+
+
+
+
+
+
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <limit-password />
+        <watch-login />
+        <reset-password />
+        <force-lock />
+        <wipe-data />
+    </uses-policies>
+</device-admin>
+
+
+
+
+
+
+
+
+
+<resources>
+    <string name="app_name">Knox Sample</string>
+    <string name="activate_admin">ACTIVATE ADMIN</string>
+    <string name="activate_license">ACTIVATE LICENSE</string>
+    <string name="deactivate_license">DEACTIVATE LICENSE</string>
+    <string name="activate_bck">ACTIVATE BACKWARDS COMPATIBLE KEY</string>
+    <string name="show_enabled">SHOW ENABLED APPS</string>
+    <string name="show_disabled">SHOW DISABLED APPS</string>
+    <string name="enable_disabled">ENABLE DISABLED APPS</string>
+    <string name="enable_given">ENABLE GIVEN APP</string>
+    <string name="disable_given">DISABLE GIVEN APP</string>
+    <string name="toggle_whitelist">TOGGLE BATTERY WHITELIST</string>
+    <string name="toggle_blacklist">TOGGLE FORCE STOP BLACKLIST</string>
+</resources>
+
+
+
+
+
+
+
+
+
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <Button android:id="@+id/btnAdmin" android:text="@string/activate_admin"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnActivateLicense" android:text="@string/activate_license"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnDeactivateLicense" android:text="@string/deactivate_license"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnActivateBck" android:text="@string/activate_bck"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnShowEnabled" android:text="@string/show_enabled"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnShowDisabled" android:text="@string/show_disabled"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnEnableDisabled" android:text="@string/enable_disabled"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnEnableGiven" android:text="@string/enable_given"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnDisableGiven" android:text="@string/disable_given"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnToggleWhitelist" android:text="@string/toggle_whitelist"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+
+        <Button android:id="@+id/btnToggleBlacklist" android:text="@string/toggle_blacklist"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+    </LinearLayout>
+</ScrollView>
+
+
+
+
+
+
+
+
+
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical" android:padding="16dp"
+    android:layout_width="match_parent" android:layout_height="wrap_content">
+
+    <EditText
+        android:id="@+id/inputPackage"
+        android:hint="Enter package name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"/>
+</LinearLayout>
+
+
+
+
+
+
+
+
+
+
+package com.example.knoxsample
+
+object Constants {
+    const val KPE_KEY = "YOUR-KPE-LICENSE-HERE"
+    const val BCK_KEY = "YOUR-BCK-KEY-HERE"
+}
+
+
+
+
+
+
+
+
+
+
+package com.example.knoxsample
+
+import android.app.admin.DeviceAdminReceiver
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
+
+class MyDeviceAdminReceiver : DeviceAdminReceiver() {
+    override fun onEnabled(context: Context, intent: Intent) {
+        Toast.makeText(context, "Admin enabled", Toast.LENGTH_SHORT).show()
+    }
+    override fun onDisabled(context: Context, intent: Intent) {
+        Toast.makeText(context, "Admin disabled", Toast.LENGTH_SHORT).show()
+    }
+}
+
+
+
+
+
+
+
+
+
+package com.example.knoxsample
+
+import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Button
+import android.widget.EditText
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var compName: ComponentName
+    private lateinit var licenseActivator: LicenseActivator
+    private lateinit var appManager: AppManagerService
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        compName = ComponentName(this, MyDeviceAdminReceiver::class.java)
+        licenseActivator = LicenseActivator(this)
+        appManager = AppManagerService(this)
+
+        findViewById<Button>(R.id.btnAdmin).setOnClickListener {
+            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, compName)
+            startActivityForResult(intent, 100)
+        }
+
+        findViewById<Button>(R.id.btnActivateLicense).setOnClickListener {
+            licenseActivator.activateKpe()
+        }
+
+        findViewById<Button>(R.id.btnDeactivateLicense).setOnClickListener {
+            licenseActivator.deactivateKpe()
+        }
+
+        findViewById<Button>(R.id.btnActivateBck).setOnClickListener {
+            licenseActivator.activateBck()
+        }
+
+        findViewById<Button>(R.id.btnShowEnabled).setOnClickListener {
+            val list = appManager.showAppState(true)
+            toast("Enabled apps:\n${list.joinToString("\n")}")
+        }
+
+        findViewById<Button>(R.id.btnShowDisabled).setOnClickListener {
+            val list = appManager.showAppState(false)
+            toast("Disabled apps:\n${list.joinToString("\n")}")
+        }
+
+        findViewById<Button>(R.id.btnEnableDisabled).setOnClickListener {
+            val list = appManager.enableAllDisabled()
+            toast("Enabled: ${list.size} apps")
+        }
+
+        findViewById<Button>(R.id.btnEnableGiven).setOnClickListener {
+            promptPackage { pkg ->
+                val res = appManager.enablePackage(pkg)
+                toast("Enable $pkg: $res")
+            }
+        }
+
+        findViewById<Button>(R.id.btnDisableGiven).setOnClickListener {
+            promptPackage { pkg ->
+                val res = appManager.disablePackage(pkg)
+                toast("Disable $pkg: $res")
+            }
+        }
+
+        findViewById<Button>(R.id.btnToggleWhitelist).setOnClickListener {
+            promptPackage { pkg ->
+                val res = appManager.toggleBatteryOptimizationWhitelist(pkg)
+                toast("Whitelist toggled: $res")
+            }
+        }
+
+        findViewById<Button>(R.id.btnToggleBlacklist).setOnClickListener {
+            promptPackage { pkg ->
+                val res = appManager.toggleForceStopBlacklist(pkg)
+                toast("Blacklist toggled: $res")
+            }
+        }
+    }
+
+    private fun promptPackage(onOk: (String) -> Unit) {
+        val view = layoutInflater.inflate(R.layout.prompt_package, null)
+        val input = view.findViewById<EditText>(R.id.inputPackage)
+        AlertDialog.Builder(this)
+            .setTitle("Package Name")
+            .setView(view)
+            .setPositiveButton("OK") { _, _ ->
+                val pkg = input.text.toString().trim()
+                if (pkg.isNotEmpty()) onOk(pkg)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun toast(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+    }
+}
+
+
+
+
+
+package com.example.knoxsample
+
+import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Button
+import android.widget.EditText
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var compName: ComponentName
+    private lateinit var licenseActivator: LicenseActivator
+    private lateinit var appManager: AppManagerService
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        compName = ComponentName(this, MyDeviceAdminReceiver::class.java)
+        licenseActivator = LicenseActivator(this)
+        appManager = AppManagerService(this)
+
+        findViewById<Button>(R.id.btnAdmin).setOnClickListener {
+            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+            intent.putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, compName)
+            startActivityForResult(intent, 100)
+        }
+
+        findViewById<Button>(R.id.btnActivateLicense).setOnClickListener {
+            licenseActivator.activateKpe()
+        }
+
+        findViewById<Button>(R.id.btnDeactivateLicense).setOnClickListener {
+            licenseActivator.deactivateKpe()
+        }
+
+        findViewById<Button>(R.id.btnActivateBck).setOnClickListener {
+            licenseActivator.activateBck()
+        }
+
+        findViewById<Button>(R.id.btnShowEnabled).setOnClickListener {
+            val list = appManager.showAppState(true)
+            toast("Enabled apps:\n${list.joinToString("\n")}")
+        }
+
+        findViewById<Button>(R.id.btnShowDisabled).setOnClickListener {
+            val list = appManager.showAppState(false)
+            toast("Disabled apps:\n${list.joinToString("\n")}")
+        }
+
+        findViewById<Button>(R.id.btnEnableDisabled).setOnClickListener {
+            val list = appManager.enableAllDisabled()
+            toast("Enabled: ${list.size} apps")
+        }
+
+        findViewById<Button>(R.id.btnEnableGiven).setOnClickListener {
+            promptPackage { pkg ->
+                val res = appManager.enablePackage(pkg)
+                toast("Enable $pkg: $res")
+            }
+        }
+
+        findViewById<Button>(R.id.btnDisableGiven).setOnClickListener {
+            promptPackage { pkg ->
+                val res = appManager.disablePackage(pkg)
+                toast("Disable $pkg: $res")
+            }
+        }
+
+        findViewById<Button>(R.id.btnToggleWhitelist).setOnClickListener {
+            promptPackage { pkg ->
+                val res = appManager.toggleBatteryOptimizationWhitelist(pkg)
+                toast("Whitelist toggled: $res")
+            }
+        }
+
+        findViewById<Button>(R.id.btnToggleBlacklist).setOnClickListener {
+            promptPackage { pkg ->
+                val res = appManager.toggleForceStopBlacklist(pkg)
+                toast("Blacklist toggled: $res")
+            }
+        }
+    }
+
+    private fun promptPackage(onOk: (String) -> Unit) {
+        val view = layoutInflater.inflate(R.layout.prompt_package, null)
+        val input = view.findViewById<EditText>(R.id.inputPackage)
+        AlertDialog.Builder(this)
+            .setTitle("Package Name")
+            .setView(view)
+            .setPositiveButton("OK") { _, _ ->
+                val pkg = input.text.toString().trim()
+                if (pkg.isNotEmpty()) onOk(pkg)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun toast(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
