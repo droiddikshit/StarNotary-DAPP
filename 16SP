@@ -503,5 +503,154 @@ class MainActivity : AppCompatActivity() {
 
 
 
+package com.test.testtt
+
+import android.content.Context
+import com.samsung.android.knox.license.KnoxEnterpriseLicenseManager
+
+class LicenseActivator(private val context: Context) {
+
+    fun activateKpe() {
+        val klm = KnoxEnterpriseLicenseManager.getInstance(context)
+        klm.activateLicense(Constants.KPE_KEY, context.packageName)
+    }
+
+    fun deactivateKpe() {
+        val klm = KnoxEnterpriseLicenseManager.getInstance(context)
+        klm.deactivateLicense(Constants.KPE_KEY, context.packageName)
+    }
+
+    fun activateBck() {
+        val klm = KnoxEnterpriseLicenseManager.getInstance(context)
+        klm.activateLicense(Constants.BCK_KEY, context.packageName)
+    }
+}
+
+
+
+
+
+
+
+
+
+package com.test.testtt
+
+import android.content.Context
+import com.samsung.android.knox.EnterpriseDeviceManager
+import com.samsung.android.knox.application.ApplicationPolicy
+
+class AppManagerService(private val context: Context) {
+
+    private val edm: EnterpriseDeviceManager = EnterpriseDeviceManager.getInstance(context)
+    private val appPolicy: ApplicationPolicy = edm.applicationPolicy
+
+    fun showAppState(enabled: Boolean): List<String> {
+        return if (enabled) {
+            appPolicy.listPackages(ApplicationPolicy.FILTER_ENABLED_APPS) ?: emptyList()
+        } else {
+            appPolicy.listPackages(ApplicationPolicy.FILTER_DISABLED_APPS) ?: emptyList()
+        }
+    }
+
+    fun enableAllDisabled(): List<String> {
+        val disabled = showAppState(false)
+        for (pkg in disabled) {
+            appPolicy.setApplicationState(pkg, true)
+        }
+        return disabled
+    }
+
+    fun enablePackage(pkg: String): Boolean {
+        return appPolicy.setApplicationState(pkg, true)
+    }
+
+    fun disablePackage(pkg: String): Boolean {
+        return appPolicy.setApplicationState(pkg, false)
+    }
+
+    fun toggleBatteryOptimizationWhitelist(pkg: String): Boolean {
+        val current = appPolicy.isPackageInBatteryOptimizationWhitelist(pkg)
+        return if (current) {
+            appPolicy.removePackageFromBatteryOptimizationWhitelist(pkg)
+        } else {
+            appPolicy.addPackageToBatteryOptimizationWhitelist(pkg)
+        }
+    }
+
+    fun toggleForceStopBlacklist(pkg: String): Boolean {
+        val current = appPolicy.isForceStopBlacklisted(pkg)
+        return if (current) {
+            appPolicy.removePackageFromForceStopBlacklist(pkg)
+        } else {
+            appPolicy.addPackageToForceStopBlacklist(pkg)
+        }
+    }
+}
+
+
+
+
+
+package com.test.testtt
+
+import android.content.Context
+import com.samsung.android.knox.EnterpriseDeviceManager
+import com.samsung.android.knox.application.ApplicationPolicy
+
+class AppManagerService(private val context: Context) {
+
+    private val edm: EnterpriseDeviceManager = EnterpriseDeviceManager.getInstance(context)
+    private val appPolicy: ApplicationPolicy = edm.applicationPolicy
+
+    fun showAppState(enabled: Boolean): List<String> {
+        return if (enabled) {
+            appPolicy.listPackages(ApplicationPolicy.FILTER_ENABLED_APPS) ?: emptyList()
+        } else {
+            appPolicy.listPackages(ApplicationPolicy.FILTER_DISABLED_APPS) ?: emptyList()
+        }
+    }
+
+    fun enableAllDisabled(): List<String> {
+        val disabled = showAppState(false)
+        for (pkg in disabled) {
+            appPolicy.setApplicationState(pkg, true)
+        }
+        return disabled
+    }
+
+    fun enablePackage(pkg: String): Boolean {
+        return appPolicy.setApplicationState(pkg, true)
+    }
+
+    fun disablePackage(pkg: String): Boolean {
+        return appPolicy.setApplicationState(pkg, false)
+    }
+
+    fun toggleBatteryOptimizationWhitelist(pkg: String): Boolean {
+        val current = appPolicy.isPackageInBatteryOptimizationWhitelist(pkg)
+        return if (current) {
+            appPolicy.removePackageFromBatteryOptimizationWhitelist(pkg)
+        } else {
+            appPolicy.addPackageToBatteryOptimizationWhitelist(pkg)
+        }
+    }
+
+    fun toggleForceStopBlacklist(pkg: String): Boolean {
+        val current = appPolicy.isForceStopBlacklisted(pkg)
+        return if (current) {
+            appPolicy.removePackageFromForceStopBlacklist(pkg)
+        } else {
+            appPolicy.addPackageToForceStopBlacklist(pkg)
+        }
+    }
+}
+
+
+
+
+
+
+
 
 
