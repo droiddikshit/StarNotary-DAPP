@@ -1,3 +1,90 @@
+class  : Activity() {
+
+    private lateinit var edm: EnterpriseDeviceManager
+    private lateinit var appPolicy: ApplicationPolicy
+    private var firewall: Firewall? = null
+
+    private val allowedApps = listOf(
+        "com.android.chrome",
+        "com.whatsapp",
+        "com.microsoft.teams",
+        "com.google.android.gm",
+        "com.google.android.youtube"
+    )
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        edm = EnterpriseDeviceManager.getInstance(this)
+        appPolicy = edm.applicationPolicy
+        firewall = edm.firewall   // ✅ instead of Firewall(this)
+
+        enforceAllowedApps()
+        configureFirewallRules()
+    }
+
+    private fun enforceAllowedApps() {
+        try {
+            // ✅ Whitelist only 5 apps
+            appPolicy.addPackagesToWhiteList(allowedApps)
+
+            // ❌ Blacklist everything else (optional fallback)
+            val pm = packageManager
+            val installed = pm.getInstalledPackages(0)
+            val blacklist = installed.map { it.packageName }
+                .filter { !allowedApps.contains(it) }
+
+            appPolicy.addPackagesToBlackList(blacklist)
+
+        } catch (e: Exception) {
+            Log.e("Knox", "Failed to enforce whitelist", e)
+        }
+    }
+
+    private fun configureFirewallRules() {
+        try {
+            val rules = mutableListOf<FirewallRule>()
+
+            val rule1 = FirewallRule().apply {
+                applicationPackageName = "com.whatsapp"
+                domain = "facebook.com"
+                ruleType = FirewallRule.RuleType.SUFFIX
+                action = FirewallRule.Action.DENY
+            }
+            rules.add(rule1)
+
+            val rule2 = FirewallRule().apply {
+                applicationPackageName = "com.android.chrome"
+                domain = "example.com"
+                ruleType = FirewallRule.RuleType.SUFFIX
+                action = FirewallRule.Action.ALLOW
+            }
+            rules.add(rule2)
+
+            val response = firewall?.addRules(rules)
+            if (response?.result == FirewallResponse.RESULT_SUCCESS) {
+                Log.d("Knox", "Firewall rules applied")
+            } else {
+                Log.e("Knox", "Firewall error code = ${response?.errorCode}")
+            }
+
+        } catch (e: Exception) {
+            Log.e("Knox", "Failed to configure firewall", e)
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
 package com.example.knoxfirewall
 
 import android.app.Activity
