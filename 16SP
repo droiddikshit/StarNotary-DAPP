@@ -1,3 +1,99 @@
+class SamsungClassActivity : Activity() {
+
+    private lateinit var edm: EnterpriseDeviceManager
+    private lateinit var appPolicy: ApplicationPolicy
+    private var firewall: Firewall? = null
+
+    private val allowedApps = listOf(
+        "com.android.chrome",
+        "com.whatsapp",
+        "com.microsoft.teams",
+        "com.google.android.gm",
+        "com.google.android.youtube"
+    )
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        edm = EnterpriseDeviceManager.getInstance(this)
+        appPolicy = edm.applicationPolicy
+        firewall = edm.firewall   // ✅ get Firewall from EDM (don’t use Firewall(this))
+
+        enforceAllowedApps()
+        configureFirewallRules()
+    }
+
+    /**
+     * Only allow apps from whitelist, block everything else
+     */
+    private fun enforceAllowedApps() {
+        try {
+            val pm = packageManager
+            val installed = pm.getInstalledPackages(0)
+
+            val blacklist = installed.map { it.packageName }
+                .filter { !allowedApps.contains(it) }
+
+            // ❌ Block all not in whitelist
+            appPolicy.addPackagesToBlackList(blacklist)
+
+            // ✅ Explicitly whitelist the allowed apps
+            appPolicy.addPackagesToWhiteList(allowedApps)
+
+            Log.d("Knox", "Whitelist enforced, allowed=${allowedApps.size}, blocked=${blacklist.size}")
+        } catch (e: Exception) {
+            Log.e("Knox", "Failed to enforce whitelist", e)
+        }
+    }
+
+    /**
+     * Apply Firewall rules
+     */
+    private fun configureFirewallRules() {
+        try {
+            val rules = mutableListOf<FirewallRule>()
+
+            // ❌ Block facebook.com in WhatsApp
+            val rule1 = FirewallRule().apply {
+                applicationPackageName = "com.whatsapp"
+                domain = "facebook.com"
+                ruleType = FirewallRule.RuleType.SUFFIX
+                action = FirewallRule.Action.DENY
+            }
+            rules.add(rule1)
+
+            // ✅ Only allow example.com in Chrome
+            val rule2 = FirewallRule().apply {
+                applicationPackageName = "com.android.chrome"
+                domain = "example.com"
+                ruleType = FirewallRule.RuleType.SUFFIX
+                action = FirewallRule.Action.ALLOW
+            }
+            rules.add(rule2)
+
+            // Apply rules using firewall
+            val response = firewall?.addRules(rules)
+            if (response?.result == FirewallResponse.RESULT_SUCCESS) {
+                Log.d("Knox", "Firewall rules applied successfully")
+            } else {
+                Log.e("Knox", "Firewall failed, code=${response?.errorCode}")
+            }
+
+        } catch (e: Exception) {
+            Log.e("Knox", "Failed to configure firewall rules", e)
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
 class  : Activity() {
 
     private lateinit var edm: EnterpriseDeviceManager
