@@ -1,3 +1,133 @@
+package com.example.knoxfirewall;
+
+import android.app.Activity;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
+import android.util.Log;
+import android.widget.Toast;
+
+import com.samsung.android.knox.EnterpriseDeviceManager;
+import com.samsung.android.knox.application.ApplicationPolicy;
+import com.samsung.android.knox.net.firewall.Firewall;
+import com.samsung.android.knox.net.firewall.FirewallRule;
+import com.samsung.android.knox.net.firewall.FirewallResponse;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class MainActivity extends Activity {
+
+    private static final String TAG = "KnoxFirewall";
+
+    private EnterpriseDeviceManager edm;
+    private ApplicationPolicy appPolicy;
+    private Firewall firewall;
+
+    // Define your allowed apps here
+    private final List<String> allowedApps = new ArrayList<String>() {{
+        add("com.android.chrome");      // Chrome
+        add("com.whatsapp");            // WhatsApp
+        add("com.microsoft.teams");     // Teams
+        add("com.google.android.gm");   // Gmail
+        add("com.google.android.youtube"); // YouTube
+    }};
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        try {
+            // ✅ Knox EDM
+            edm = EnterpriseDeviceManager.getInstance(this);
+
+            // ✅ Policies
+            appPolicy = edm.getApplicationPolicy();
+            firewall = new Firewall(this);
+
+            // Enforce only allowed apps
+            enforceAllowedApps();
+
+            // Apply firewall rules
+            configureFirewallRules();
+
+            Toast.makeText(this, "Knox policies applied", Toast.LENGTH_LONG).show();
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error applying Knox policies", e);
+            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /**
+     * Enforce whitelist: only allowed apps run, everything else disabled
+     */
+    private void enforceAllowedApps() {
+        try {
+            PackageManager pm = getPackageManager();
+            List<PackageInfo> installedApps = pm.getInstalledPackages(0);
+
+            for (PackageInfo pkg : installedApps) {
+                String packageName = pkg.packageName;
+
+                if (allowedApps.contains(packageName)) {
+                    // ✅ Enable allowed apps
+                    appPolicy.setApplicationState(packageName, ApplicationPolicy.APP_STATE_ENABLED);
+                    Log.d(TAG, "Allowed: " + packageName);
+                } else {
+                    // ❌ Disable all others
+                    appPolicy.setApplicationState(packageName, ApplicationPolicy.APP_STATE_DISABLED);
+                    Log.d(TAG, "Blocked: " + packageName);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to enforce app whitelist", e);
+        }
+    }
+
+    /**
+     * Apply some firewall rules
+     */
+    private void configureFirewallRules() {
+        try {
+            List<FirewallRule> rules = new ArrayList<>();
+
+            // ❌ Block facebook.com inside WhatsApp
+            FirewallRule rule1 = new FirewallRule();
+            rule1.setApplicationPackageName("com.whatsapp");
+            rule1.setDomain("facebook.com");
+            rule1.setRuleType(FirewallRule.RuleType.SUFFIX);
+            rule1.setAction(FirewallRule.Action.DENY);
+            rules.add(rule1);
+
+            // ✅ Only allow example.com in Chrome
+            FirewallRule rule2 = new FirewallRule();
+            rule2.setApplicationPackageName("com.android.chrome");
+            rule2.setDomain("example.com");
+            rule2.setRuleType(FirewallRule.RuleType.SUFFIX);
+            rule2.setAction(FirewallRule.Action.ALLOW);
+            rules.add(rule2);
+
+            FirewallResponse response = firewall.addRules(rules);
+
+            if (response.getResult() == FirewallResponse.RESULT_SUCCESS) {
+                Log.d(TAG, "Firewall rules applied successfully");
+            } else {
+                Log.e(TAG, "Firewall error code = " + response.getErrorCode());
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to configure firewall rules", e);
+        }
+    }
+}
+
+
+
+
+
+
+
 
 
 
