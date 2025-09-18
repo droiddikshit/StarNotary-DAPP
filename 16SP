@@ -1,3 +1,131 @@
+package com.example.knoxfirewall
+
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
+import com.samsung.android.knox.EnterpriseDeviceManager
+import com.samsung.android.knox.application.ApplicationPolicy
+import com.samsung.android.knox.net.firewall.Firewall
+import com.samsung.android.knox.net.firewall.FirewallRule
+import com.samsung.android.knox.net.firewall.FirewallResponse
+
+class MainActivity : Activity() {
+
+    private val TAG = "KnoxFirewall"
+
+    private lateinit var edm: EnterpriseDeviceManager
+    private lateinit var appPolicy: ApplicationPolicy
+    private lateinit var firewall: Firewall
+
+    // ✅ Whitelist: only these apps will run
+    private val allowedApps = listOf(
+        "com.android.chrome",       // Chrome
+        "com.whatsapp",             // WhatsApp
+        "com.microsoft.teams",      // Teams
+        "com.google.android.gm",    // Gmail
+        "com.google.android.youtube" // YouTube
+    )
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        try {
+            // ✅ Knox EDM
+            edm = EnterpriseDeviceManager.getInstance(this)
+
+            // ✅ Policies
+            appPolicy = edm.applicationPolicy
+            firewall = Firewall(this)
+
+            // Enforce only allowed apps
+            enforceAllowedApps()
+
+            // Apply firewall rules
+            configureFirewallRules()
+
+            Toast.makeText(this, "Knox policies applied", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error applying Knox policies", e)
+            Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /**
+     * Only allow apps from whitelist, disable everything else
+     */
+    private fun enforceAllowedApps() {
+        try {
+            val pm: PackageManager = packageManager
+            val installedApps = pm.getInstalledPackages(0)
+
+            for (pkg in installedApps) {
+                val packageName = pkg.packageName
+
+                if (allowedApps.contains(packageName)) {
+                    // ✅ Enable allowed apps
+                    appPolicy.setApplicationState(packageName, ApplicationPolicy.APP_STATE_ENABLED)
+                    Log.d(TAG, "Allowed: $packageName")
+                } else {
+                    // ❌ Disable all other apps
+                    appPolicy.setApplicationState(packageName, ApplicationPolicy.APP_STATE_DISABLED)
+                    Log.d(TAG, "Blocked: $packageName")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to enforce app whitelist", e)
+        }
+    }
+
+    /**
+     * Apply some firewall rules
+     */
+    private fun configureFirewallRules() {
+        try {
+            val rules = mutableListOf<FirewallRule>()
+
+            // ❌ Block facebook.com in WhatsApp
+            val rule1 = FirewallRule().apply {
+                applicationPackageName = "com.whatsapp"
+                domain = "facebook.com"
+                ruleType = FirewallRule.RuleType.SUFFIX
+                action = FirewallRule.Action.DENY
+            }
+            rules.add(rule1)
+
+            // ✅ Only allow example.com in Chrome
+            val rule2 = FirewallRule().apply {
+                applicationPackageName = "com.android.chrome"
+                domain = "example.com"
+                ruleType = FirewallRule.RuleType.SUFFIX
+                action = FirewallRule.Action.ALLOW
+            }
+            rules.add(rule2)
+
+            val response: FirewallResponse = firewall.addRules(rules)
+
+            if (response.result == FirewallResponse.RESULT_SUCCESS) {
+                Log.d(TAG, "Firewall rules applied successfully")
+            } else {
+                Log.e(TAG, "Firewall error code = ${response.errorCode}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to configure firewall rules", e)
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
 package com.example.knoxfirewall;
 
 import android.app.Activity;
