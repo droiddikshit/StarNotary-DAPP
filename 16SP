@@ -1,3 +1,60 @@
+import com.samsung.android.knox.EnterpriseDeviceManager;
+import com.samsung.android.knox.net.dns.DomainFilterPolicy;
+import com.samsung.android.knox.net.dns.DomainFilterRule;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class DomainFilterManager {
+
+    private DomainFilterPolicy domainFilterPolicy;
+
+    public DomainFilterManager(Context context) {
+        EnterpriseDeviceManager edm = EnterpriseDeviceManager.getInstance(context);
+        domainFilterPolicy = edm.getDomainFilterPolicy();
+    }
+
+    public void applyRules() {
+        try {
+            // Create rule list
+            List<DomainFilterRule> rules = new ArrayList<>();
+
+            // Example 1: Block facebook.com
+            DomainFilterRule blockFacebook = new DomainFilterRule(
+                    "facebook.com",
+                    DomainFilterRule.Action.DENY
+            );
+            rules.add(blockFacebook);
+
+            // Example 2: Allow only example.com
+            DomainFilterRule allowExample = new DomainFilterRule(
+                    "example.com",
+                    DomainFilterRule.Action.ALLOW
+            );
+            rules.add(allowExample);
+
+            // Apply rules globally (all apps)
+            domainFilterPolicy.addDomainFilterRules(rules);
+
+            // Optionally enforce whitelist mode
+            domainFilterPolicy.setDomainFilterWhitelistEnable(true);
+
+            Log.d("KnoxDomainFilter", "Domain filter rules applied successfully");
+
+        } catch (SecurityException se) {
+            Log.e("KnoxDomainFilter", "SecurityException: " + se.getMessage());
+        } catch (Exception e) {
+            Log.e("KnoxDomainFilter", "Error: " + e.getMessage());
+        }
+    }
+}
+
+
+
+
+
+
+
 // build.gradle (Project-level)
 buildscript {
     repositories {
