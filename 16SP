@@ -1,3 +1,44 @@
+private fun configureFirewallRules() {
+    try {
+        val rules = mutableListOf<FirewallRule>()
+
+        // ❌ Block facebook.com in WhatsApp
+        val rule1 = FirewallRule(
+            FirewallRule.Action.DENY,             // what to do
+            FirewallRule.AddressType.ALL          // IPv4 + IPv6
+        ).apply {
+            setApplication("com.whatsapp")        // app to apply rule on
+            setDomain("facebook.com")             // target domain
+        }
+        rules.add(rule1)
+
+        // ✅ Only allow example.com in Chrome
+        val rule2 = FirewallRule(
+            FirewallRule.Action.ALLOW,
+            FirewallRule.AddressType.ALL
+        ).apply {
+            setApplication("com.android.chrome")
+            setDomain("example.com")
+        }
+        rules.add(rule2)
+
+        // Apply rules
+        val response = firewall?.addRules(rules)
+        if (response?.result == FirewallResponse.RESULT_SUCCESS) {
+            Log.d("Knox", "Firewall rules applied successfully")
+        } else {
+            Log.e("Knox", "Firewall failed, code=${response?.errorCode}")
+        }
+
+    } catch (e: Exception) {
+        Log.e("Knox", "Failed to configure firewall rules", e)
+    }
+}
+
+
+
+
+
 class SamsungClassActivity : Activity() {
 
     private lateinit var edm: EnterpriseDeviceManager
