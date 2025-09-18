@@ -1,3 +1,31 @@
+private fun enforceAllowedApps() {
+    try {
+        val pm = packageManager
+        val installed = pm.getInstalledPackages(0)
+
+        for (pkg in installed) {
+            val packageName = pkg.packageName
+            if (allowedApps.contains(packageName)) {
+                // ✅ Enable whitelisted apps
+                appPolicy.setApplicationState(packageName, ApplicationPolicy.APP_STATE_ENABLED)
+                Log.d("Knox", "Allowed: $packageName")
+            } else {
+                // ❌ Disable everything else
+                appPolicy.setApplicationState(packageName, ApplicationPolicy.APP_STATE_DISABLED)
+                Log.d("Knox", "Blocked: $packageName")
+            }
+        }
+
+    } catch (e: Exception) {
+        Log.e("Knox", "Failed to enforce whitelist", e)
+    }
+}
+
+
+
+
+
+
 import com.samsung.android.knox.net.firewall.FirewallRule
 import com.samsung.android.knox.AppIdentity
 
