@@ -1,3 +1,52 @@
+import com.samsung.android.knox.net.firewall.FirewallRule
+import com.samsung.android.knox.AppIdentity
+
+private fun configureFirewallRules() {
+    try {
+        val rules = mutableListOf<FirewallRule>()
+
+        // ❌ Block facebook.com in WhatsApp
+        val whatsappIdentity = AppIdentity("com.whatsapp", null)
+        val rule1 = FirewallRule(
+            FirewallRule.RuleType.DENY,           // deny action
+            Firewall.AddressType.ALL              // IPv4 + IPv6
+        ).apply {
+            setApplication(whatsappIdentity)
+            setDomain("facebook.com")
+        }
+        rules.add(rule1)
+
+        // ✅ Only allow example.com in Chrome
+        val chromeIdentity = AppIdentity("com.android.chrome", null)
+        val rule2 = FirewallRule(
+            FirewallRule.RuleType.ALLOW,
+            Firewall.AddressType.ALL
+        ).apply {
+            setApplication(chromeIdentity)
+            setDomain("example.com")
+        }
+        rules.add(rule2)
+
+        // Apply rules
+        val response = firewall?.addRules(rules)
+        if (response?.result == FirewallResponse.RESULT_SUCCESS) {
+            Log.d("Knox", "Firewall rules applied successfully")
+        } else {
+            Log.e("Knox", "Firewall failed, code=${response?.errorCode}")
+        }
+
+    } catch (e: Exception) {
+        Log.e("Knox", "Failed to configure firewall rules", e)
+    }
+}
+
+
+
+
+
+
+
+
 private fun configureFirewallRules() {
     try {
         val rules = mutableListOf<FirewallRule>()
