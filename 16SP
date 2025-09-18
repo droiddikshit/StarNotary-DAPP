@@ -1,3 +1,8 @@
+DomainFilterManager dfManager = new DomainFilterManager(this);
+dfManager.applyRules();
+
+
+
 <uses-permission android:name="com.samsung.android.knox.permission.KNOX_DOMAIN_FILTER" />
 
 
