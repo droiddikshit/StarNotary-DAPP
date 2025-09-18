@@ -1,3 +1,114 @@
+
+
+
+package com.example.knoxcontrol;
+
+import android.app.Activity;
+import android.os.Bundle;
+import android.widget.Toast;
+
+import com.samsung.android.knox.EnterpriseDeviceManager;
+import com.samsung.android.knox.application.ApplicationPolicy;
+import com.samsung.android.knox.net.firewall.DomainFilterRule;
+import com.samsung.android.knox.net.firewall.FirewallPolicy;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class MainActivity extends Activity {
+
+    private EnterpriseDeviceManager edm;
+    private ApplicationPolicy appPolicy;
+    private FirewallPolicy firewallPolicy;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        try {
+            // ✅ Knox EDM instance
+            edm = EnterpriseDeviceManager.getInstance(this);
+
+            // ✅ Get App & Firewall policies
+            appPolicy = edm.getApplicationPolicy();
+            firewallPolicy = edm.getFirewallPolicy();
+
+            // 1. Control App Execution
+            configureAppExecution();
+
+            // 2. Control Web Execution
+            configureWebExecution();
+
+            Toast.makeText(this, "Knox Policies Applied!", Toast.LENGTH_LONG).show();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Error applying Knox policies: " + e.getMessage(),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void configureAppExecution() {
+        // Example packages
+        String whatsappPkg = "com.whatsapp";
+        String chromePkg = "com.android.chrome";
+
+        // ❌ Block WhatsApp
+        appPolicy.setApplicationState(whatsappPkg, ApplicationPolicy.APP_STATE_DISABLED);
+
+        // ✅ Allow Chrome
+        appPolicy.setApplicationState(chromePkg, ApplicationPolicy.APP_STATE_ENABLED);
+
+        // ✅ Whitelist only Chrome, block others
+        List<String> whitelist = new ArrayList<>();
+        whitelist.add(chromePkg);
+        appPolicy.addPackagesToWhiteList(whitelist);
+
+        // ❌ Example blacklist
+        List<String> blacklist = new ArrayList<>();
+        blacklist.add(whatsappPkg);
+        appPolicy.addPackagesToBlackList(blacklist);
+    }
+
+    private void configureWebExecution() {
+        List<DomainFilterRule> rules = new ArrayList<>();
+
+        // Rule 1: Block Facebook inside WhatsApp
+        DomainFilterRule rule1 = new DomainFilterRule();
+        rule1.setApplicationPackageName("com.whatsapp");
+        rule1.setDomain("facebook.com");
+        rule1.setRuleType(DomainFilterRule.RuleType.SUFFIX);
+        rule1.setAction(DomainFilterRule.Action.DENY);
+        rules.add(rule1);
+
+        // Rule 2: Allow only example.com inside Chrome
+        DomainFilterRule rule2 = new DomainFilterRule();
+        rule2.setApplicationPackageName("com.android.chrome");
+        rule2.setDomain("example.com");
+        rule2.setRuleType(DomainFilterRule.RuleType.SUFFIX);
+        rule2.setAction(DomainFilterRule.Action.ALLOW);
+        rules.add(rule2);
+
+        // Apply rules
+        firewallPolicy.addDomainFilterRules(rules);
+    }
+}
+
+
+
+
+
+<uses-permission android:name="com.samsung.android.knox.permission.KNOX_FIREWALL"/>
+<uses-permission android:name="com.samsung.android.knox.permission.KNOX_APP_MGMT"/>
+<uses-permission android:name="com.samsung.android.knox.permission.KNOX_CONTAINER"/>
+
+
+
+
+
+
+
+
 DomainFilterManager dfManager = new DomainFilterManager(this);
 dfManager.applyRules();
 
