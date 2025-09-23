@@ -1,3 +1,70 @@
+
+package com.example.knoxpinning
+
+import android.content.Context
+import android.util.Log
+import com.samsung.android.knox.EnterpriseDeviceManager
+import com.samsung.android.knox.AppIdentity
+import com.samsung.android.knox.net.firewall.DomainFilterRule
+import com.samsung.android.knox.net.firewall.DomainFilterReport
+import com.samsung.android.knox.net.firewall.Firewall
+
+class WebsitePinningManager(private val context: Context) {
+
+    private val firewall: Firewall by lazy {
+        EnterpriseDeviceManager.getInstance(context).firewall
+    }
+
+    fun applyWebsitePinning() {
+        try {
+            val allowList = listOf("www.mytrusted.com", "api.mytrusted.com")
+            val denyList = listOf("*") // block everything else
+
+            // Rule applies to ALL apps on the device
+            val rule = DomainFilterRule(AppIdentity.ALL_PACKAGES, denyList, allowList)
+
+            // Remove any existing rules
+            firewall.domainFilterRules?.let { existing ->
+                if (existing.isNotEmpty()) {
+                    firewall.removeDomainFilterRules(existing)
+                }
+            }
+
+            // Add the new whitelist rule
+            firewall.addDomainFilterRule(rule)
+
+            Log.i("KnoxPinning", "✅ Website pinning applied")
+
+        } catch (e: Exception) {
+            Log.e("KnoxPinning", "Error applying website pinning", e)
+        }
+    }
+
+    fun printReports() {
+        try {
+            val reports: List<DomainFilterReport>? = firewall.domainFilterReports
+            if (reports.isNullOrEmpty()) {
+                Log.i("KnoxReport", "ℹ️ No blocked domain reports yet")
+            } else {
+                for (r in reports) {
+                    Log.i(
+                        "KnoxReport",
+                        "🚫 Blocked ${r.domainUrl} | App: ${r.packageName} | Time: ${r.timeStamp}"
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("KnoxReport", "Error fetching reports", e)
+        }
+    }
+}
+
+
+
+
+///
+
+
 package com.example.knoxpinning
 
 import android.util.Log
