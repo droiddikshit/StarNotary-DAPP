@@ -1,3 +1,110 @@
+<uses-permission android:name="com.samsung.android.knox.permission.KNOX_FIREWALL" />
+<uses-permission android:name="com.samsung.android.knox.permission.KNOX_APP_MGMT" />
+<uses-permission android:name="com.samsung.android.knox.permission.KNOX_NETWORK_FILTER" />
+
+
+public class MainActivity extends AppCompatActivity {
+
+    private WebsitePinningManager pinningManager;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        pinningManager = new WebsitePinningManager();
+
+        // Apply rules when app starts
+        findViewById(R.id.btnApplyPinning).setOnClickListener(v -> {
+            pinningManager.applyWebsitePinning();
+        });
+
+        // Print blocked attempts
+        findViewById(R.id.btnCheckReports).setOnClickListener(v -> {
+            pinningManager.printReports();
+        });
+    }
+}
+
+
+import com.samsung.android.knox.EnterpriseDeviceManager;
+import com.samsung.android.knox.net.firewall.DomainFilterRule;
+import com.samsung.android.knox.net.firewall.DomainFilterReport;
+import com.samsung.android.knox.net.firewall.Firewall;
+import com.samsung.android.knox.AppIdentity;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class WebsitePinningManager {
+
+    private Firewall firewall;
+
+    public WebsitePinningManager() {
+        EnterpriseDeviceManager edm = EnterpriseDeviceManager.getInstance();
+        firewall = edm.getFirewall();
+    }
+
+    public void applyWebsitePinning() {
+        try {
+            // Whitelisted (pinned) domains
+            List<String> allowList = new ArrayList<>();
+            allowList.add("www.mytrusted.com");
+            allowList.add("api.mytrusted.com");
+
+            // Block everything else
+            List<String> denyList = new ArrayList<>();
+            denyList.add("*");   // wildcard = all domains
+
+            // Apply rule to ALL apps on device
+            AppIdentity appAll = Firewall.AppIdentity.FIREWALL_ALL_PACKAGES;
+
+            DomainFilterRule rule = new DomainFilterRule(appAll, denyList, allowList);
+
+            // Optional: force DNS servers (only works if no VPN/proxy is active)
+            rule.setDns1("8.8.8.8");
+            rule.setDns2("8.8.4.4");
+
+            // Clear any old rules first
+            firewall.clearDomainFilterRules();
+
+            // Add the new whitelist rule
+            firewall.addDomainFilterRule(rule);
+
+            System.out.println("✅ Website pinning applied.");
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void printReports() {
+        try {
+            List<DomainFilterReport> reports = firewall.getDomainFilterReports(0); // get all
+            for (DomainFilterReport r : reports) {
+                System.out.println("Blocked: " + r.getDomainUrl()
+                        + " from app: " + r.getPackageName()
+                        + " at: " + r.getTimeStamp());
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 private fun enforceAllowedApps() {
     try {
         val pm = packageManager
