@@ -1,3 +1,35 @@
+package com.example.knoxpinning
+
+import android.os.Bundle
+import android.widget.Button
+import androidx.appcompat.app.AppCompatActivity
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var pinningManager: WebsitePinningManager
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        pinningManager = WebsitePinningManager(this)
+
+        findViewById<Button>(R.id.btnApplyPinning).setOnClickListener {
+            pinningManager.applyWebsitePinning()
+        }
+
+        findViewById<Button>(R.id.btnCheckReports).setOnClickListener {
+            pinningManager.printReports()
+        }
+    }
+}
+
+
+
+
+
+
+
 
 package com.example.knoxpinning
 
