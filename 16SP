@@ -1,3 +1,100 @@
+
+// WebsitePinningManager.kt
+
+package com.example.knoxpinning
+
+import android.content.Context
+import android.util.Log
+import com.samsung.android.knox.AppIdentity
+import com.samsung.android.knox.EnterpriseDeviceManager
+import com.samsung.android.knox.net.firewall.DomainFilterRule
+import com.samsung.android.knox.net.firewall.Firewall
+
+class WebsitePinningManager(private val context: Context) {
+
+    private val firewall: Firewall by lazy {
+        EnterpriseDeviceManager.getInstance(context).firewall
+    }
+
+    /**
+     * Apply a strict website pinning rule:
+     * Allow only the specified domains; block everything else.
+     */
+    fun applyWebsitePinning() {
+        try {
+            // Define allow list (whitelisted domains)
+            val allowDomains = listOf(
+                "www.mytrusted.com",
+                "api.mytrusted.com"
+            )
+
+            // Deny everything else (wildcard "*")
+            val denyDomains = listOf("*")
+
+            // Apply rule to all apps
+            val appAll = AppIdentity(Firewall.FIREWALL_ALL_PACKAGES, null)
+
+            // Create DomainFilterRule
+            val rule = DomainFilterRule(appAll, denyDomains, allowDomains)
+
+            // Optionally set DNS servers
+            rule.setDns1("8.8.8.8")
+            rule.setDns2("8.8.4.4")
+
+            // First remove existing domain filter rules (if any)
+            // (Get existing, then remove)
+            val existingRules = firewall.getDomainFilterRules()
+            if (existingRules != null && existingRules.isNotEmpty()) {
+                firewall.removeDomainFilterRules(existingRules)
+            }
+
+            // Add the new rule
+            firewall.addDomainFilterRules(listOf(rule))
+
+            Log.i("KnoxPinning", "Website pinning applied: allowing $allowDomains")
+
+        } catch (securityEx: SecurityException) {
+            Log.e("KnoxPinning", "Missing permissions or license for Knox firewall", securityEx)
+        } catch (e: Exception) {
+            Log.e("KnoxPinning", "Failed to apply website pinning", e)
+        }
+    }
+
+    /**
+     * Log blocked domain attempts from the domain filter reports.
+     */
+    fun logBlockedAttempts() {
+        try {
+            // For API level 39, docs mention “get log report with all denied URLs” in Firewall class.
+            val reports = firewall.getDomainFilterReports()
+            if (reports.isNullOrEmpty()) {
+                Log.i("KnoxReport", "No blocked domain reports")
+            } else {
+                reports.forEach { r ->
+                    Log.i("KnoxReport", "Blocked domain: ${r.domainUrl} | by app: ${r.packageName} | timestamp: ${r.timeStamp}")
+                }
+            }
+        } catch (securityEx: SecurityException) {
+            Log.e("KnoxReport", "Missing permissions or license for reports", securityEx)
+        } catch (e: Exception) {
+            Log.e("KnoxReport", "Failed to retrieve blocked domain reports", e)
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 package com.example.knoxpinning
 
 import android.os.Bundle
