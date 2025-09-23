@@ -1,3 +1,67 @@
+package com.example.knoxpinning
+
+import android.util.Log
+import com.samsung.android.knox.EnterpriseDeviceManager
+import com.samsung.android.knox.AppIdentity
+import com.samsung.android.knox.net.firewall.DomainFilterRule
+import com.samsung.android.knox.net.firewall.DomainFilterReport
+import com.samsung.android.knox.net.firewall.Firewall
+
+class WebsitePinningManager {
+
+    private val firewall: Firewall by lazy {
+        EnterpriseDeviceManager.getInstance().firewall
+    }
+
+    fun applyWebsitePinning() {
+        try {
+            val allowList = listOf(
+                "www.mytrusted.com",
+                "api.mytrusted.com"
+            )
+
+            val denyList = listOf("*") // deny everything else
+
+            // Apply to ALL apps
+            val appAll = AppIdentity.FIREWALL_ALL_PACKAGES
+
+            val rule = DomainFilterRule(appAll, denyList, allowList)
+
+            // Optional custom DNS (only if no VPN/proxy is active)
+            rule.dns1 = "8.8.8.8"
+            rule.dns2 = "8.8.4.4"
+
+            // Clear old rules and apply new one
+            firewall.clearDomainFilterRules()
+            firewall.addDomainFilterRule(rule)
+
+            Log.i("KnoxPinning", "✅ Website pinning applied")
+
+        } catch (e: Exception) {
+            Log.e("KnoxPinning", "Error applying pinning", e)
+        }
+    }
+
+    fun printReports() {
+        try {
+            val reports: List<DomainFilterReport> = firewall.getDomainFilterReports(0)
+            for (r in reports) {
+                Log.i("KnoxReport", "Blocked ${r.domainUrl} from ${r.packageName} at ${r.timeStamp}")
+            }
+        } catch (e: Exception) {
+            Log.e("KnoxReport", "Error fetching reports", e)
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
 <uses-permission android:name="com.samsung.android.knox.permission.KNOX_FIREWALL" />
 <uses-permission android:name="com.samsung.android.knox.permission.KNOX_APP_MGMT" />
 <uses-permission android:name="com.samsung.android.knox.permission.KNOX_NETWORK_FILTER" />
