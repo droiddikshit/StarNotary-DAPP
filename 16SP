@@ -1,3 +1,89 @@
+package com.example.knoxpinning
+
+import android.content.Context
+import android.util.Log
+import com.samsung.android.knox.EnterpriseDeviceManager
+import com.samsung.android.knox.net.firewall.DomainFilterRule
+import com.samsung.android.knox.net.firewall.Firewall
+import com.samsung.android.knox.net.firewall.DomainFilterReport
+
+class WebsitePinningManager(private val context: Context) {
+
+    private val firewall: Firewall by lazy {
+        EnterpriseDeviceManager.getInstance(context).firewall
+    }
+
+    /** Allow only whitelisted domains, block everything else */
+    fun applyWebsitePinning() {
+        try {
+            val allowList = listOf("www.mytrusted.com", "api.mytrusted.com")
+            val denyList = listOf("*")
+
+            val rule = DomainFilterRule(Firewall.FIREWALL_ALL_PACKAGES, denyList, allowList)
+
+            val existing = firewall.getDomainFilterRules(Firewall.FIREWALL_ALL_PACKAGES)
+            if (!existing.isNullOrEmpty()) {
+                firewall.removeDomainFilterRules(existing)
+            }
+
+            firewall.addDomainFilterRules(listOf(rule))
+            Log.i("KnoxPinning", "✅ Website pinning applied: only $allowList allowed")
+        } catch (e: Exception) {
+            Log.e("KnoxPinning", "Error applying website pinning", e)
+        }
+    }
+
+    /** Block only Facebook, allow everything else */
+    fun blockFacebook() {
+        try {
+            val allowList = emptyList<String>()
+            val denyList = listOf("www.facebook.com")
+
+            val rule = DomainFilterRule(Firewall.FIREWALL_ALL_PACKAGES, denyList, allowList)
+
+            val existing = firewall.getDomainFilterRules(Firewall.FIREWALL_ALL_PACKAGES)
+            if (!existing.isNullOrEmpty()) {
+                firewall.removeDomainFilterRules(existing)
+            }
+
+            firewall.addDomainFilterRules(listOf(rule))
+            Log.i("KnoxPinning", "✅ Facebook blocked, all other sites allowed")
+        } catch (e: Exception) {
+            Log.e("KnoxPinning", "Error blocking Facebook", e)
+        }
+    }
+
+    /** Print blocked reports to Logcat */
+    fun logBlockedAttempts() {
+        try {
+            val reports: List<DomainFilterReport>? =
+                firewall.getDomainFilterReports(Firewall.FIREWALL_ALL_PACKAGES)
+
+            if (reports.isNullOrEmpty()) {
+                Log.i("KnoxReport", "ℹ️ No blocked domain reports yet")
+            } else {
+                reports.forEach { r ->
+                    Log.i(
+                        "KnoxReport",
+                        "🚫 Blocked ${r.domainUrl} | App: ${r.packageName} | Time: ${r.timeStamp}"
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("KnoxReport", "Error fetching reports", e)
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
 
 // WebsitePinningManager.kt
 
