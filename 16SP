@@ -1,3 +1,104 @@
+
+package com.example.kioskbrowser
+
+import android.app.ActivityManager
+import android.os.Build
+import android.os.Bundle
+import android.webkit.*
+import android.widget.Toast
+import androidx.annotation.RequiresApi
+import androidx.appcompat.app.AppCompatActivity
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var webView: WebView
+
+    // ✅ Allowed domains (subdomains automatically allowed)
+    private val allowList = listOf(
+        "google.com",
+        "example.com",
+        "mycompany.com"
+    )
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        webView = findViewById(R.id.webView)
+
+        // === WebView Settings ===
+        val settings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.loadWithOverviewMode = true
+        settings.useWideViewPort = true
+        settings.setSupportZoom(true)
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false
+
+        // ✅ Mixed content fix (API 21+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        }
+
+        // ✅ Spoof Chrome user agent (so Google works properly)
+        val ua = settings.userAgentString
+        settings.userAgentString = ua.replace("wv", "") +
+                " Chrome/110.0.0.0 Mobile Safari/537.36"
+
+        // === Domain filtering ===
+        webView.webViewClient = object : WebViewClient() {
+            @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val host = request?.url?.host
+                return if (isAllowed(host)) {
+                    false // allow
+                } else {
+                    Toast.makeText(applicationContext, "Blocked: $host", Toast.LENGTH_SHORT).show()
+                    true // block
+                }
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                val host = Uri.parse(url).host
+                return if (isAllowed(host)) {
+                    false
+                } else {
+                    Toast.makeText(applicationContext, "Blocked: $host", Toast.LENGTH_SHORT).show()
+                    true
+                }
+            }
+        }
+
+        // ✅ Start URL
+        webView.loadUrl("https://www.google.com")
+
+        // ✅ Enable kiosk (screen pinning)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            if (am.lockTaskModeState == ActivityManager.LOCK_TASK_MODE_NONE) {
+                startLockTask() // lock user into app
+            }
+        }
+    }
+
+    // === Check if host is in allow list (including subdomains) ===
+    private fun isAllowed(host: String?): Boolean {
+        if (host.isNullOrEmpty()) return false
+        for (allowed in allowList) {
+            if (host.equals(allowed, ignoreCase = true) || host.endsWith(".$allowed")) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+
+
+
+
 package com.example.kioskbrowser;
 
 import android.app.ActivityManager;
