@@ -1,3 +1,67 @@
+// ✅ Enable advanced settings
+    webView.getSettings().setJavaScriptEnabled(true);
+    webView.getSettings().setDomStorageEnabled(true);
+    webView.getSettings().setDatabaseEnabled(true);
+    webView.getSettings().setLoadWithOverviewMode(true);
+    webView.getSettings().setUseWideViewPort(true);
+    webView.getSettings().setSupportZoom(true);
+    webView.getSettings().setBuiltInZoomControls(true);
+    webView.getSettings().setDisplayZoomControls(false);
+
+    // ✅ Allow https/http mix (needed for some sites)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        webView.getSettings().setMixedContentMode(WebView.MIXED_CONTENT_ALWAYS_ALLOW);
+    }
+
+    // ✅ Optional: spoof Chrome user agent (Google sites sometimes reject old WebView UA)
+    String ua = webView.getSettings().getUserAgentString();
+    webView.getSettings().setUserAgentString(
+            ua.replace("wv", "") + " Chrome/110.0.0.0 Mobile Safari/537.36"
+    );
+
+    webView.setWebViewClient(new WebViewClient() {
+        @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            String host = request.getUrl().getHost();
+            if (isAllowed(host)) {
+                return false;
+            } else {
+                Toast.makeText(getApplicationContext(),
+                        "Blocked: " + host, Toast.LENGTH_SHORT).show();
+                return true;
+            }
+        }
+
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view, String url) {
+            String host = android.net.Uri.parse(url).getHost();
+            if (isAllowed(host)) {
+                return false;
+            } else {
+                Toast.makeText(getApplicationContext(),
+                        "Blocked: " + host, Toast.LENGTH_SHORT).show();
+                return true;
+            }
+        }
+    });
+
+    // ✅ Load Google or any other site from allow-list
+    webView.loadUrl("https://www.google.com");
+
+    // Lock task (screen pinning)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+        if (am.getLockTaskModeState() == ActivityManager.LOCK_TASK_MODE_NONE) {
+            startLockTask();
+        }
+    }
+}
+
+
+
+
+
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
