@@ -1,3 +1,117 @@
+package com.example.kioskbrowser
+
+import android.app.ActivityManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Toast
+import androidx.annotation.RequiresApi
+import androidx.appcompat.app.AppCompatActivity
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var webView: WebView
+
+    // ❌ Block list
+    private val blockList = listOf("google.com")
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        webView = findViewById(R.id.webView)
+
+        // === WebView Settings ===
+        val settings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        settings.loadWithOverviewMode = true
+        settings.useWideViewPort = true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        }
+
+        // === WebView Client with blocking ===
+        webView.webViewClient = object : WebViewClient() {
+            @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val host = request?.url?.host
+                return if (isBlocked(host)) {
+                    Toast.makeText(applicationContext, "Blocked: $host", Toast.LENGTH_SHORT).show()
+                    true
+                } else {
+                    false
+                }
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                val host = Uri.parse(url).host
+                return if (isBlocked(host)) {
+                    Toast.makeText(applicationContext, "Blocked: $host", Toast.LENGTH_SHORT).show()
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        // ✅ Try to load Google (will be blocked)
+        safeLoadUrl("https://www.google.com")
+
+        // ✅ Allowed site
+        safeLoadUrl("https://www.example.com")
+
+        // === Enter Kiosk Mode (Screen Pinning) ===
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+                if (am.lockTaskModeState == ActivityManager.LOCK_TASK_MODE_NONE) {
+                    startLockTask() // 🚀 Locks app to screen
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    // ✅ Block checker
+    private fun isBlocked(host: String?): Boolean {
+        if (host.isNullOrEmpty()) return false
+        for (blocked in blockList) {
+            if (host.equals(blocked, ignoreCase = true) || host.endsWith(".$blocked")) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // ✅ Safe load wrapper
+    private fun safeLoadUrl(url: String) {
+        val host = Uri.parse(url).host
+        if (isBlocked(host)) {
+            Toast.makeText(this, "Blocked (from loadUrl): $host", Toast.LENGTH_SHORT).show()
+        } else {
+            webView.loadUrl(url)
+        }
+    }
+
+    override fun onBackPressed() {
+        // 🚫 Disable back button
+    }
+}
+
+
+
+
+
+
+
+
 
 override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     if (event.keyCode == KeyEvent.KEYCODE_BACK) {
