@@ -1,4 +1,33 @@
 
+override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            // 🚫 Block back key
+            return true
+        }
+    }
+    return super.dispatchKeyEvent(event)
+}
+
+
+override fun onWindowFocusChanged(hasFocus: Boolean) {
+    super.onWindowFocusChanged(hasFocus)
+    if (hasFocus) {
+        window.decorView.systemUiVisibility =
+            (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN)
+    }
+}
+
+
+
+
+
+
+
+
+
 package com.example.kioskbrowser
 
 import android.os.Build
