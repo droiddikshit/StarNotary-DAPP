@@ -1,3 +1,92 @@
+package com.example.kioskbrowser;
+
+import android.app.ActivityManager;
+import android.os.Build;
+import android.os.Bundle;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.Toast;
+import androidx.annotation.RequiresApi;
+import androidx.appcompat.app.AppCompatActivity;
+import java.util.Arrays;
+import java.util.List;
+
+public class MainActivity extends AppCompatActivity {
+
+    private WebView webView;
+    // ✅ Your allow-list (add domains here)
+    private final List<String> allowList = Arrays.asList(
+            "example.com",
+            "mycompany.com",
+            "google.com"
+    );
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        webView = findViewById(R.id.webView);
+        webView.getSettings().setJavaScriptEnabled(true);
+
+        webView.setWebViewClient(new WebViewClient() {
+            @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                String host = request.getUrl().getHost();
+                if (isAllowed(host)) {
+                    return false; // allow navigation
+                } else {
+                    Toast.makeText(getApplicationContext(), "Blocked: " + host, Toast.LENGTH_SHORT).show();
+                    return true; // block navigation
+                }
+            }
+
+            // For old Android versions
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                String host = android.net.Uri.parse(url).getHost();
+                if (isAllowed(host)) {
+                    return false;
+                } else {
+                    Toast.makeText(getApplicationContext(), "Blocked: " + host, Toast.LENGTH_SHORT).show();
+                    return true;
+                }
+            }
+        });
+
+        // Load initial pinned website
+        webView.loadUrl("https://example.com");
+
+        // ✅ Lock the user inside this app (Screen Pinning)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
+            if (am.getLockTaskModeState() == ActivityManager.LOCK_TASK_MODE_NONE) {
+                startLockTask(); // App goes into kiosk mode
+            }
+        }
+    }
+
+    private boolean isAllowed(String host) {
+        if (host == null) return false;
+        for (String allowed : allowList) {
+            if (host.endsWith(allowed)) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+
+
+
+
+
+
+
+
 package com.example.knoxpinning
 
 import android.content.Context
