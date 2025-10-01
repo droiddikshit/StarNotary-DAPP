@@ -1,3 +1,124 @@
+
+package com.example.watchdog
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.database.ContentObserver
+import android.media.AudioManager
+import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.IBinder
+import android.provider.Settings
+
+class AudioWatchdogService : Service() {
+
+    private lateinit var audioManager: AudioManager
+    private lateinit var observer: ContentObserver
+
+    // Change this flag depending on what you want:
+    // true = force mute always
+    // false = force unmute always
+    private var forceMute = true  
+
+    override fun onCreate() {
+        super.onCreate()
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        startForegroundServiceWithNotification()
+
+        // Observe changes in system volume
+        observer = object : ContentObserver(Handler(mainLooper)) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                super.onChange(selfChange, uri)
+                enforceMutePolicy()
+            }
+        }
+
+        // Register observer for STREAM_MUSIC volume
+        contentResolver.registerContentObserver(
+            Settings.System.CONTENT_URI,
+            true,
+            observer
+        )
+
+        // Enforce policy at startup
+        enforceMutePolicy()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        contentResolver.unregisterContentObserver(observer)
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun enforceMutePolicy() {
+        if (forceMute) {
+            if (!audioManager.isStreamMute(AudioManager.STREAM_MUSIC)) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_MUTE,
+                        0
+                    )
+                } else {
+                    audioManager.setStreamMute(AudioManager.STREAM_MUSIC, true)
+                }
+            }
+        } else {
+            if (audioManager.isStreamMute(AudioManager.STREAM_MUSIC)) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    audioManager.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_UNMUTE,
+                        0
+                    )
+                } else {
+                    audioManager.setStreamMute(AudioManager.STREAM_MUSIC, false)
+                }
+            }
+        }
+    }
+
+    private fun startForegroundServiceWithNotification() {
+        val channelId = "audio_watchdog_channel"
+        val channelName = "Audio Watchdog"
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val chan = NotificationChannel(
+                channelId,
+                channelName,
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(chan)
+        }
+
+        val notification: Notification = Notification.Builder(this, channelId)
+            .setContentTitle("Audio Watchdog Running")
+            .setContentText("Enforcing mute/unmute policy")
+            .setSmallIcon(android.R.drawable.ic_lock_silent_mode)
+            .build()
+
+        startForeground(1, notification)
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
 import android.content.Context
 import android.media.AudioManager
 import android.os.Build
