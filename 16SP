@@ -1,3 +1,52 @@
+import android.content.Context
+import android.media.AudioManager
+import android.os.Build
+
+object AudioMuteHelper {
+
+    fun mute(context: Context, stream: Int = AudioManager.STREAM_MUSIC) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            // Old way (deprecated but works pre-23)
+            audioManager.setStreamMute(stream, true)
+        } else {
+            // Modern way
+            audioManager.adjustStreamVolume(stream, AudioManager.ADJUST_MUTE, 0)
+        }
+    }
+
+    fun unmute(context: Context, stream: Int = AudioManager.STREAM_MUSIC) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            // Old way
+            audioManager.setStreamMute(stream, false)
+        } else {
+            // Modern way
+            audioManager.adjustStreamVolume(stream, AudioManager.ADJUST_UNMUTE, 0)
+        }
+    }
+
+    fun isMuted(context: Context, stream: Int = AudioManager.STREAM_MUSIC): Boolean {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            audioManager.isStreamMute(stream)
+        } else {
+            // Pre-M doesn’t have isStreamMute reliably, check volume == 0
+            audioManager.getStreamVolume(stream) == 0
+        }
+    }
+}
+
+
+
+
+
+
+
+
 
 import com.samsung.android.knox.EnterpriseDeviceManager
 import com.samsung.android.knox.restriction.RestrictionPolicy
