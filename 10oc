@@ -27,6 +27,297 @@ xmlns:tools="http://schemas.android.com/tools">
 <!-- WiFi Direct hardware -->
 <uses-feature
     android:name="android.hardware.wifi.direct"
+    android:required="true" />
+
+<application
+    android:allowBackup="true"
+    android:icon="@mipmap/ic_launcher"
+    android:label="Screen Share"
+    android:roundIcon="@mipmap/ic_launcher_round"
+    android:supportsRtl="true"
+    android:theme="@style/Theme.AppCompat.Light.DarkActionBar"
+    tools:targetApi="31">
+    
+    <!-- Main Activity -->
+    <activity
+        android:name=".MainActivity"
+        android:exported="true"
+        android:screenOrientation="portrait">
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+    </activity>
+    
+    <!-- Screen Share Activity -->
+    <activity
+        android:name=".ScreenShareActivity"
+        android:exported="false"
+        android:screenOrientation="portrait" />
+    
+</application>
+```
+
+</manifest>
+
+<!-- =================================================================
+FILE 7: build.gradle (Module: app)
+================================================================= -->
+
+plugins {
+id ‘com.android.application’
+id ‘org.jetbrains.kotlin.android’
+}
+
+android {
+namespace ‘com.example.screenshare’
+compileSdk 34
+
+```
+defaultConfig {
+    applicationId "com.example.screenshare"
+    minSdk 24
+    targetSdk 34
+    versionCode 1
+    versionName "1.0"
+
+    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+}
+
+buildTypes {
+    release {
+        minifyEnabled false
+        proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+    }
+}
+
+compileOptions {
+    sourceCompatibility JavaVersion.VERSION_1_8
+    targetCompatibility JavaVersion.VERSION_1_8
+}
+
+kotlinOptions {
+    jvmTarget = '1.8'
+}
+```
+
+}
+
+dependencies {
+implementation ‘androidx.core:core-ktx:1.12.0’
+implementation ‘androidx.appcompat:appcompat:1.6.1’
+implementation ‘com.google.android.material:material:1.11.0’
+implementation ‘androidx.constraintlayout:constraintlayout:2.1.4’
+
+```
+// For future WebSocket implementation (optional)
+// implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+```
+
+}
+
+<!-- =================================================================
+FILE 8: build.gradle (Project level - if needed)
+================================================================= -->
+
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+plugins {
+id ‘com.android.application’ version ‘8.1.0’ apply false
+id ‘com.android.library’ version ‘8.1.0’ apply false
+id ‘org.jetbrains.kotlin.android’ version ‘1.9.0’ apply false
+}
+
+<!-- =================================================================
+FILE 9: settings.gradle (Project level)
+================================================================= -->
+
+pluginManagement {
+repositories {
+google()
+mavenCentral()
+gradlePluginPortal()
+}
+}
+dependencyResolutionManagement {
+repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+repositories {
+google()
+mavenCentral()
+}
+}
+rootProject.name = “ScreenShare”
+include ‘:app’
+
+<!-- =================================================================
+COMPLETE PROJECT STRUCTURE
+================================================================= -->
+
+<!--
+ScreenShare/
+├── app/
+│   ├── src/
+│   │   └── main/
+│   │       ├── java/com/example/screenshare/
+│   │       │   ├── MainActivity.kt
+│   │       │   ├── ScreenShareActivity.kt
+│   │       │   └── PermissionsHelper.kt
+│   │       ├── res/
+│   │       │   └── layout/
+│   │       │       ├── activity_main.xml
+│   │       │       └── activity_screen_share.xml
+│   │       └── AndroidManifest.xml
+│   └── build.gradle
+├── build.gradle
+└── settings.gradle
+-->
+
+<!-- =================================================================
+STEP-BY-STEP SETUP INSTRUCTIONS
+================================================================= -->
+
+<!--
+1. CREATE NEW PROJECT IN ANDROID STUDIO:
+   - Open Android Studio
+   - Click "New Project"
+   - Select "Empty Activity"
+   - Name: ScreenShare
+   - Package: com.example.screenshare
+   - Language: Kotlin
+   - Minimum SDK: API 24 (Android 7.0)
+
+2. COPY FILES:
+   a) Replace MainActivity.kt with FILE 1
+   b) Create ScreenShareActivity.kt with FILE 2
+   c) Create PermissionsHelper.kt with FILE 3
+   d) Replace activity_main.xml with FILE 4
+   e) Create activity_screen_share.xml with FILE 5
+   f) Replace AndroidManifest.xml with FILE 6
+   g) Replace app/build.gradle with FILE 7
+
+3. SYNC PROJECT:
+   - Click "Sync Now" in Android Studio
+   - Wait for Gradle sync to complete
+
+4. BUILD AND INSTALL:
+   - Connect both Android devices via USB
+   - Build > Build Bundle(s) / APK(s) > Build APK(s)
+   - Install on both devices
+
+5. ENABLE SETTINGS ON BOTH DEVICES:
+   - Enable WiFi
+   - Enable Location/GPS
+   - Go to Settings > Developer Options > Enable "Stay Awake"
+
+6. TEST:
+   Device 1:
+   - Open app
+   - Tap "Device 1 - Share My Screen"
+   - Tap "Start Sharing"
+   - Grant screen capture permission
+   - Grant location permission
+   - Wait for "Server started"
+
+   Device 2:
+   - Open app
+   - Tap "Device 2 - View Shared Screen"
+   - Grant location permission
+   - Tap "Scan for Sender"
+   - Select Device 1 from list
+   - View shared screen!
+
+7. TROUBLESHOOTING:
+   - If build fails: Check Kotlin version and dependencies
+   - If no devices found: Restart both apps, check WiFi/Location
+   - If connection fails: Try moving devices closer
+   - If screen is black: Check screen capture permission on Device 1
+   - Check Logcat in Android Studio for detailed error messages
+-->
+
+<!-- =================================================================
+TESTING CHECKLIST
+================================================================= -->
+
+<!--
+✓ Both devices have Android 7.0+ (API 24+)
+✓ WiFi enabled on both devices
+✓ Location/GPS enabled on both devices
+✓ App installed on both devices
+✓ Screen capture permission granted (Device 1)
+✓ Location permission granted (both devices)
+✓ Devices are within WiFi Direct range (typically 200 feet / 60 meters)
+✓ No other WiFi Direct connections active
+
+EXPECTED BEHAVIOR:
+- Device 1 creates WiFi Direct group
+- Device 2 discovers and connects to Device 1
+- Device 1 starts streaming screen at ~15 FPS
+- Device 2 displays live screen with minimal latency (200-500ms)
+- Both devices show FPS counter
+- Stop button disconnects cleanly
+-->
+
+<!-- =================================================================
+PERFORMANCE TUNING (Optional)
+================================================================= -->
+
+<!--
+In ScreenShareActivity.kt, modify these constants:
+
+For BETTER QUALITY (slower):
+    const val SCALE_FACTOR = 1          // Full resolution
+    const val JPEG_QUALITY = 85         // Higher quality
+    const val TARGET_FPS = 20           // Smoother
+
+For BETTER PERFORMANCE (faster):
+    const val SCALE_FACTOR = 3          // Lower resolution
+    const val JPEG_QUALITY = 50         // Lower quality
+    const val TARGET_FPS = 10           // Lower frame rate
+
+For BALANCED (default):
+    const val SCALE_FACTOR = 2          // Half resolution
+    const val JPEG_QUALITY = 70         // Good quality
+    const val TARGET_FPS = 15           // Good frame rate
+-->
+
+
+
+
+
+
+
+
+
+
+
+<!-- =================================================================
+FILE 6: AndroidManifest.xml (app/src/main/)
+================================================================= -->
+
+<?xml version="1.0" encoding="utf-8"?>
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+xmlns:tools="http://schemas.android.com/tools">
+
+```
+<!-- WiFi Direct Permissions -->
+<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+<uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+<!-- For Android 13+ -->
+<uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" 
+    android:usesPermissionFlags="neverForLocation"
+    tools:targetApi="tiramisu" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+<!-- Network Permissions -->
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+<!-- WiFi Direct hardware -->
+<uses-feature
+    android:name="android.hardware.wifi.direct"
     android:required="
 ```
 
