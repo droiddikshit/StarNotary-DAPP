@@ -1,0 +1,633 @@
+// =================================================================
+// FILE 1: MainActivity.kt
+// =================================================================
+package com.example.screenshare
+
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Button
+import androidx.appcompat.app.AppCompatActivity
+
+class MainActivity : AppCompatActivity() {
+
+```
+private lateinit var senderButton: Button
+private lateinit var receiverButton: Button
+
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    setContentView(R.layout.activity_main)
+    
+    senderButton = findViewById(R.id.senderButton)
+    receiverButton = findViewById(R.id.receiverButton)
+    
+    senderButton.setOnClickListener {
+        val intent = Intent(this, ScreenShareActivity::class.java)
+        intent.putExtra("MODE", "SENDER")
+        startActivity(intent)
+    }
+    
+    receiverButton.setOnClickListener {
+        val intent = Intent(this, ScreenShareActivity::class.java)
+        intent.putExtra("MODE", "RECEIVER")
+        startActivity(intent)
+    }
+}
+```
+
+}
+
+// =================================================================
+// FILE 2: ScreenShareActivity.kt
+// =================================================================
+package com.example.screenshare
+
+import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.Image
+import android.media.ImageReader
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
+import android.net.wifi.p2p.WifiP2pConfig
+import android.net.wifi.p2p.WifiP2pDevice
+import android.net.wifi.p2p.WifiP2pDeviceList
+import android.net.wifi.p2p.WifiP2pInfo
+import android.net.wifi.p2p.WifiP2pManager
+import android.os.Bundle
+import android.util.DisplayMetrics
+import android.util.Log
+import android.view.View
+import android.widget.Button
+import android.widget.ImageView
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
+import kotlin.concurrent.thread
+
+class ScreenShareActivity : AppCompatActivity() {
+
+```
+private var mode: String = "SENDER"
+
+private lateinit var wifiP2pManager: WifiP2pManager
+private lateinit var channel: WifiP2pManager.Channel
+private lateinit var wifiReceiver: BroadcastReceiver
+private lateinit var intentFilter: IntentFilter
+
+private lateinit var projectionManager: MediaProjectionManager
+private var mediaProjection: MediaProjection? = null
+private var virtualDisplay: VirtualDisplay? = null
+private var imageReader: ImageReader? = null
+
+private var serverSocket: ServerSocket? = null
+private var clientSocket: Socket? = null
+private var socket: Socket? = null
+
+private var screenWidth = 0
+private var screenHeight = 0
+private var screenDensity = 0
+
+private var isStreaming = false
+private var isReceiving = false
+private var groupOwnerAddress: String? = null
+private val peers = mutableListOf<WifiP2pDevice>()
+
+private lateinit var statusText: TextView
+private lateinit var fpsText: TextView
+private lateinit var actionButton: Button
+private lateinit var stopButton: Button
+private lateinit var screenView: ImageView
+private lateinit var senderLayout: View
+private lateinit var receiverLayout: View
+
+private var frameCount = 0
+private var startTime = 0L
+
+companion object {
+    const val TAG = "ScreenShare"
+    const val REQUEST_MEDIA_PROJECTION = 1001
+    const val SERVER_PORT = 8888
+    const val SCALE_FACTOR = 2
+    const val JPEG_QUALITY = 70
+    const val TARGET_FPS = 15
+    const val CONNECTION_TIMEOUT = 5000
+}
+
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    setContentView(R.layout.activity_screen_share)
+    
+    mode = intent.getStringExtra("MODE") ?: "SENDER"
+    
+    initializeViews()
+    initializeWifiDirect()
+    getScreenMetrics()
+    
+    if (mode == "SENDER") {
+        setupSenderMode()
+    } else {
+        setupReceiverMode()
+    }
+    
+    val permissionsHelper = PermissionsHelper(this)
+    if (!permissionsHelper.hasAllPermissions()) {
+        permissionsHelper.checkAndRequestPermissions()
+    }
+}
+
+private fun initializeViews() {
+    statusText = findViewById(R.id.statusText)
+    fpsText = findViewById(R.id.fpsText)
+    actionButton = findViewById(R.id.actionButton)
+    stopButton = findViewById(R.id.stopButton)
+    screenView = findViewById(R.id.screenView)
+    senderLayout = findViewById(R.id.senderLayout)
+    receiverLayout = findViewById(R.id.receiverLayout)
+}
+
+private fun setupSenderMode() {
+    title = "Device 1 - Screen Sender"
+    senderLayout.visibility = View.VISIBLE
+    receiverLayout.visibility = View.GONE
+    
+    projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) 
+        as MediaProjectionManager
+    
+    actionButton.text = "Start Sharing"
+    actionButton.setOnClickListener { startScreenSharing() }
+    stopButton.setOnClickListener { stopScreenSharing() }
+    stopButton.isEnabled = false
+    updateStatus("Ready to share screen")
+}
+
+private fun setupReceiverMode() {
+    title = "Device 2 - Screen Receiver"
+    senderLayout.visibility = View.GONE
+    receiverLayout.visibility = View.VISIBLE
+    
+    actionButton.text = "Scan for Sender"
+    actionButton.setOnClickListener { discoverPeers() }
+    stopButton.setOnClickListener { disconnect() }
+    stopButton.isEnabled = false
+    updateStatus("Ready to receive screen")
+}
+
+private fun initializeWifiDirect() {
+    wifiP2pManager = getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager
+    channel = wifiP2pManager.initialize(this, mainLooper, null)
+    
+    intentFilter = IntentFilter().apply {
+        addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
+        addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
+        addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+        addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
+    }
+    
+    wifiReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
+                    if (mode == "RECEIVER") {
+                        wifiP2pManager.requestPeers(channel) { peerList ->
+                            handlePeersChanged(peerList)
+                        }
+                    }
+                }
+                WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
+                    wifiP2pManager.requestConnectionInfo(channel) { info ->
+                        handleConnectionChanged(info)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun getScreenMetrics() {
+    val metrics = DisplayMetrics()
+    windowManager.defaultDisplay.getMetrics(metrics)
+    screenWidth = metrics.widthPixels
+    screenHeight = metrics.heightPixels
+    screenDensity = metrics.densityDpi
+}
+
+private fun startScreenSharing() {
+    updateStatus("Creating WiFi Direct group...")
+    wifiP2pManager.createGroup(channel, object : WifiP2pManager.ActionListener {
+        override fun onSuccess() {
+            updateStatus("Group created. Starting server...")
+            startServer()
+            requestScreenCapture()
+        }
+        override fun onFailure(reason: Int) {
+            updateStatus("Failed to create group: $reason")
+            showToast("Failed to create WiFi Direct group")
+        }
+    })
+}
+
+private fun requestScreenCapture() {
+    val captureIntent = projectionManager.createScreenCaptureIntent()
+    startActivityForResult(captureIntent, REQUEST_MEDIA_PROJECTION)
+}
+
+override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    super.onActivityResult(requestCode, resultCode, data)
+    if (requestCode == REQUEST_MEDIA_PROJECTION) {
+        if (resultCode == Activity.RESULT_OK && data != null) {
+            mediaProjection = projectionManager.getMediaProjection(resultCode, data)
+            setupVirtualDisplay()
+            updateStatus("Screen capture started. Waiting for receiver...")
+            actionButton.isEnabled = false
+            stopButton.isEnabled = true
+        } else {
+            updateStatus("Screen capture permission denied")
+            stopScreenSharing()
+        }
+    }
+}
+
+private fun setupVirtualDisplay() {
+    val scaledWidth = screenWidth / SCALE_FACTOR
+    val scaledHeight = screenHeight / SCALE_FACTOR
+    
+    imageReader = ImageReader.newInstance(
+        scaledWidth, scaledHeight, PixelFormat.RGBA_8888, 2
+    )
+    
+    virtualDisplay = mediaProjection?.createVirtualDisplay(
+        "ScreenShare", scaledWidth, scaledHeight, screenDensity,
+        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+        imageReader?.surface, null, null
+    )
+}
+
+private fun startServer() {
+    thread {
+        try {
+            serverSocket = ServerSocket(SERVER_PORT)
+            runOnUiThread {
+                updateStatus("Server started. Waiting for receiver...")
+            }
+            clientSocket = serverSocket?.accept()
+            runOnUiThread {
+                updateStatus("Receiver connected! Streaming...")
+            }
+            startStreaming()
+        } catch (e: Exception) {
+            Log.e(TAG, "Server error: ${e.message}", e)
+            runOnUiThread { updateStatus("Server error: ${e.message}") }
+        }
+    }
+}
+
+private fun startStreaming() {
+    isStreaming = true
+    val frameDuration = 1000L / TARGET_FPS
+    
+    thread {
+        try {
+            val outputStream = DataOutputStream(clientSocket?.getOutputStream())
+            var count = 0
+            val start = System.currentTimeMillis()
+            
+            while (isStreaming && clientSocket?.isConnected == true) {
+                val frameStart = System.currentTimeMillis()
+                val image = imageReader?.acquireLatestImage()
+                
+                if (image != null) {
+                    try {
+                        val bitmap = imageToBitmap(image)
+                        val byteStream = ByteArrayOutputStream()
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, byteStream)
+                        val imageBytes = byteStream.toByteArray()
+                        
+                        outputStream.writeInt(imageBytes.size)
+                        outputStream.write(imageBytes)
+                        outputStream.flush()
+                        
+                        count++
+                        if (count % 30 == 0) {
+                            val elapsed = (System.currentTimeMillis() - start) / 1000f
+                            val fps = count / elapsed
+                            runOnUiThread { fpsText.text = "FPS: %.1f".format(fps) }
+                        }
+                    } finally {
+                        image.close()
+                    }
+                }
+                
+                val frameTime = System.currentTimeMillis() - frameStart
+                val sleepTime = frameDuration - frameTime
+                if (sleepTime > 0) Thread.sleep(sleepTime)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Streaming error: ${e.message}", e)
+            runOnUiThread {
+                updateStatus("Streaming stopped")
+                stopScreenSharing()
+            }
+        }
+    }
+}
+
+private fun imageToBitmap(image: Image): Bitmap {
+    val planes = image.planes
+    val buffer = planes[0].buffer
+    val pixelStride = planes[0].pixelStride
+    val rowStride = planes[0].rowStride
+    val rowPadding = rowStride - pixelStride * image.width
+    
+    val bitmap = Bitmap.createBitmap(
+        image.width + rowPadding / pixelStride,
+        image.height, Bitmap.Config.ARGB_8888
+    )
+    bitmap.copyPixelsFromBuffer(buffer)
+    
+    return if (rowPadding == 0) {
+        bitmap
+    } else {
+        Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+    }
+}
+
+private fun stopScreenSharing() {
+    isStreaming = false
+    try {
+        clientSocket?.close()
+        serverSocket?.close()
+    } catch (e: Exception) {
+        Log.e(TAG, "Error closing sockets: ${e.message}")
+    }
+    virtualDisplay?.release()
+    imageReader?.close()
+    mediaProjection?.stop()
+    wifiP2pManager.removeGroup(channel, null)
+    
+    updateStatus("Screen sharing stopped")
+    actionButton.isEnabled = true
+    stopButton.isEnabled = false
+    fpsText.text = "FPS: 0.0"
+}
+
+private fun discoverPeers() {
+    updateStatus("Scanning for sender...")
+    peers.clear()
+    wifiP2pManager.discoverPeers(channel, object : WifiP2pManager.ActionListener {
+        override fun onSuccess() {
+            Log.d(TAG, "Peer discovery initiated")
+        }
+        override fun onFailure(reason: Int) {
+            updateStatus("Discovery failed: $reason")
+            showToast("Failed to scan for devices")
+        }
+    })
+}
+
+private fun handlePeersChanged(peerList: WifiP2pDeviceList) {
+    peers.clear()
+    peers.addAll(peerList.deviceList)
+    
+    if (peers.isEmpty()) {
+        updateStatus("No devices found")
+        showToast("No devices found")
+    } else {
+        showPeerSelectionDialog()
+    }
+}
+
+private fun showPeerSelectionDialog() {
+    val deviceNames = peers.map { it.deviceName }.toTypedArray()
+    AlertDialog.Builder(this)
+        .setTitle("Select Sender Device")
+        .setItems(deviceNames) { _, which -> connectToPeer(peers[which]) }
+        .setNegativeButton("Cancel", null)
+        .show()
+}
+
+private fun connectToPeer(device: WifiP2pDevice) {
+    val config = WifiP2pConfig().apply {
+        deviceAddress = device.deviceAddress
+    }
+    updateStatus("Connecting to ${device.deviceName}...")
+    wifiP2pManager.connect(channel, config, object : WifiP2pManager.ActionListener {
+        override fun onSuccess() {
+            Log.d(TAG, "Connection initiated")
+        }
+        override fun onFailure(reason: Int) {
+            updateStatus("Connection failed: $reason")
+            showToast("Failed to connect")
+        }
+    })
+}
+
+private fun handleConnectionChanged(info: WifiP2pInfo?) {
+    if (info?.groupFormed == true) {
+        groupOwnerAddress = info.groupOwnerAddress.hostAddress
+        if (mode == "RECEIVER" && !info.isGroupOwner) {
+            updateStatus("Connected! Connecting to server...")
+            connectToServer()
+        }
+    }
+}
+
+private fun connectToServer() {
+    thread {
+        try {
+            socket = Socket()
+            socket?.connect(
+                InetSocketAddress(groupOwnerAddress, SERVER_PORT),
+                CONNECTION_TIMEOUT
+            )
+            runOnUiThread {
+                updateStatus("Connected! Receiving screen...")
+                actionButton.isEnabled = false
+                stopButton.isEnabled = true
+            }
+            isReceiving = true
+            startTime = System.currentTimeMillis()
+            frameCount = 0
+            receiveScreen()
+        } catch (e: Exception) {
+            Log.e(TAG, "Connection error: ${e.message}", e)
+            runOnUiThread {
+                updateStatus("Connection error: ${e.message}")
+                disconnect()
+            }
+        }
+    }
+}
+
+private fun receiveScreen() {
+    thread {
+        try {
+            val inputStream = DataInputStream(socket?.getInputStream())
+            while (isReceiving && socket?.isConnected == true) {
+                val frameSize = inputStream.readInt()
+                if (frameSize <= 0 || frameSize > 5 * 1024 * 1024) break
+                
+                val imageBytes = ByteArray(frameSize)
+                inputStream.readFully(imageBytes)
+                val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, frameSize)
+                
+                if (bitmap != null) {
+                    runOnUiThread {
+                        screenView.setImageBitmap(bitmap)
+                        updateFps()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Receiving error: ${e.message}", e)
+            runOnUiThread {
+                updateStatus("Connection lost")
+                disconnect()
+            }
+        }
+    }
+}
+
+private fun updateFps() {
+    frameCount++
+    if (frameCount % 10 == 0) {
+        val elapsed = (System.currentTimeMillis() - startTime) / 1000f
+        val fps = frameCount / elapsed
+        fpsText.text = "FPS: %.1f".format(fps)
+    }
+}
+
+private fun disconnect() {
+    isReceiving = false
+    try {
+        socket?.close()
+    } catch (e: Exception) {
+        Log.e(TAG, "Error closing socket: ${e.message}")
+    }
+    wifiP2pManager.removeGroup(channel, null)
+    runOnUiThread {
+        updateStatus("Disconnected")
+        actionButton.isEnabled = true
+        stopButton.isEnabled = false
+        fpsText.text = "FPS: 0.0"
+        screenView.setImageBitmap(null)
+    }
+}
+
+private fun updateStatus(message: String) {
+    runOnUiThread {
+        statusText.text = message
+        Log.d(TAG, message)
+    }
+}
+
+private fun showToast(message: String) {
+    runOnUiThread {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+}
+
+override fun onResume() {
+    super.onResume()
+    registerReceiver(wifiReceiver, intentFilter)
+}
+
+override fun onPause() {
+    super.onPause()
+    unregisterReceiver(wifiReceiver)
+}
+
+override fun onDestroy() {
+    super.onDestroy()
+    if (mode == "SENDER") stopScreenSharing() else disconnect()
+}
+
+override fun onRequestPermissionsResult(
+    requestCode: Int, permissions: Array<out String>, grantResults: IntArray
+) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    if (requestCode == PermissionsHelper.PERMISSION_REQUEST_CODE) {
+        val permissionsHelper = PermissionsHelper(this)
+        if (!permissionsHelper.hasAllPermissions()) {
+            showToast("Required permissions not granted")
+            finish()
+        }
+    }
+}
+```
+
+}
+
+// =================================================================
+// FILE 3: PermissionsHelper.kt
+// =================================================================
+package com.example.screenshare
+
+import android.Manifest
+import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+
+class PermissionsHelper(private val activity: Activity) {
+
+```
+companion object {
+    const val PERMISSION_REQUEST_CODE = 1234
+    
+    private val REQUIRED_PERMISSIONS = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.NEARBY_WIFI_DEVICES,
+            Manifest.permission.POST_NOTIFICATIONS
+        )
+    } else {
+        arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+    }
+}
+
+fun checkAndRequestPermissions(): Boolean {
+    val missingPermissions = REQUIRED_PERMISSIONS.filter { permission ->
+        ContextCompat.checkSelfPermission(activity, permission) != 
+            PackageManager.PERMISSION_GRANTED
+    }
+    
+    return if (missingPermissions.isNotEmpty()) {
+        ActivityCompat.requestPermissions(
+            activity,
+            missingPermissions.toTypedArray(),
+            PERMISSION_REQUEST_CODE
+        )
+        false
+    } else {
+        true
+    }
+}
+
+fun hasAllPermissions(): Boolean {
+    return REQUIRED_PERMISSIONS.all { permission ->
+        ContextCompat.checkSelfPermission(activity, permission) == 
+            PackageManager.PERMISSION_GRANTED
+    }
+}
+```
+
+}
