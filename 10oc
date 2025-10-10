@@ -1,3 +1,217 @@
+
+<!-- =================================================================
+FILE 4: res/layout/activity_main.xml
+================================================================= -->
+
+<?xml version="1.0" encoding="utf-8"?>
+
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+android:layout_width="match_parent"
+android:layout_height="match_parent"
+android:orientation="vertical"
+android:padding="32dp"
+android:gravity="center"
+android:background="#F5F5F5">
+
+```
+<TextView
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:text="Screen Share"
+    android:textSize="32sp"
+    android:textStyle="bold"
+    android:textColor="#333333"
+    android:layout_marginBottom="16dp"/>
+
+<TextView
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:text="Choose your role"
+    android:textSize="18sp"
+    android:textColor="#666666"
+    android:layout_marginBottom="48dp"/>
+
+<Button
+    android:id="@+id/senderButton"
+    android:layout_width="match_parent"
+    android:layout_height="80dp"
+    android:text="📤 Device 1\nShare My Screen"
+    android:textSize="18sp"
+    android:textStyle="bold"
+    android:backgroundTint="#4CAF50"
+    android:layout_marginBottom="20dp"/>
+
+<Button
+    android:id="@+id/receiverButton"
+    android:layout_width="match_parent"
+    android:layout_height="80dp"
+    android:text="📥 Device 2\nView Shared Screen"
+    android:textSize="18sp"
+    android:textStyle="bold"
+    android:backgroundTint="#2196F3"/>
+```
+
+</LinearLayout>
+
+<!-- =================================================================
+FILE 5: res/layout/activity_screen_share.xml
+================================================================= -->
+
+<?xml version="1.0" encoding="utf-8"?>
+
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+android:layout_width="match_parent"
+android:layout_height="match_parent"
+android:orientation="vertical"
+android:background="#F5F5F5">
+
+```
+<!-- Header Section -->
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:background="#FFFFFF"
+    android:elevation="4dp">
+
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Status"
+        android:textSize="16sp"
+        android:textColor="#333333"
+        android:gravity="center"
+        android:minHeight="40dp"/>
+
+    <TextView
+        android:id="@+id/fpsText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="FPS: 0.0"
+        android:textSize="14sp"
+        android:textColor="#4CAF50"
+        android:gravity="center"
+        android:layout_marginTop="4dp"
+        android:textStyle="bold"/>
+
+</LinearLayout>
+
+<!-- Control Buttons -->
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="16dp">
+
+    <Button
+        android:id="@+id/actionButton"
+        android:layout_width="0dp"
+        android:layout_height="56dp"
+        android:layout_weight="1"
+        android:text="Start"
+        android:textSize="16sp"
+        android:layout_marginEnd="8dp"
+        android:backgroundTint="#2196F3"/>
+
+    <Button
+        android:id="@+id/stopButton"
+        android:layout_width="0dp"
+        android:layout_height="56dp"
+        android:layout_weight="1"
+        android:text="Stop"
+        android:textSize="16sp"
+        android:backgroundTint="#F44336"/>
+
+</LinearLayout>
+
+<!-- Sender Layout -->
+<LinearLayout
+    android:id="@+id/senderLayout"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:gravity="center"
+    android:visibility="gone">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="📤"
+        android:textSize="80sp"
+        android:layout_marginBottom="24dp"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Sender Mode"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:textColor="#333333"
+        android:layout_marginBottom="16dp"/>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Instructions:\n\n1. Click 'Start Sharing'\n2. Grant screen capture permission\n3. Wait for Device 2 to connect\n4. Your screen will be shared"
+        android:textSize="16sp"
+        android:textColor="#666666"
+        android:lineSpacingExtra="4dp"
+        android:gravity="center"/>
+
+</LinearLayout>
+
+<!-- Receiver Layout -->
+<LinearLayout
+    android:id="@+id/receiverLayout"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:orientation="vertical"
+    android:visibility="gone">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_margin="16dp"
+        android:background="#000000">
+
+        <ImageView
+            android:id="@+id/screenView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitCenter"
+            android:contentDescription="Shared screen display"/>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📥\n\nWaiting for screen share..."
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:layout_gravity="center"
+            android:gravity="center"/>
+
+    </FrameLayout>
+
+</LinearLayout>
+```
+
+</LinearLayout>
+
+
+
+
+
+
+
+
+
+
+
 // =================================================================
 // FILE 1: MainActivity.kt
 // =================================================================
